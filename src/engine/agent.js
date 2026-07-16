@@ -1,15 +1,17 @@
-// src/engine/agent.js
-const { ChatOllama } = require("@langchain/community/chat_models/ollama"); // Perbaikan import
-const { PromptTemplate } = require("prompt_template"); 
-const { SystemMessagePromptTemplate, HumanMessagePromptTemplate } = require("@langchain/core/prompts");
-const {_prompt} = require("./prompt");
-
 /**
- * Agent class handles the interaction between the LLM and the application.
+ * src/engine/agent.js
+ * Mesin utama yang menghubungkan AI (Ollama) dengan input pengguna.
  */
+
+// 1. Import library versi terbaru untuk Ollama
+const { ChatOllama } = require("@langchain/ollama");
+
+// 2. Import file prompt yang sudah kita buat sebelumnya
+const _prompt = require("./prompt");
+
 class JarvisAgent {
     constructor() {
-        // Inisialisasi Model (Contoh menggunakan Ollama)
+        // Inisialisasi Model menggunakan Ollama secara lokal
         this.model = new ChatOllama({
             model: "qwen2.5:7b",
             temperature: 0,
@@ -23,8 +25,12 @@ class JarvisAgent {
      */
     async processInput(userInput) {
         try {
+            // Menggabungkan instruksi dasar (systemPrompt) dengan pertanyaan pengguna
             const fullPrompt = `${_prompt.systemPrompt}\n\nUser: ${userInput}`;
+            
+            // Memanggil model AI untuk menghasilkan jawaban
             const response = await this.model.invoke(fullPrompt);
+            
             return response.content;
         } catch (error) {
             console.error("Error di JarvisAgent:", error);
@@ -33,4 +39,5 @@ class JarvisAgent {
     }
 }
 
+// 3. Mengekspor class JarvisAgent agar bisa dijalankan oleh test_brain.js dan main.js
 module.exports = new JarvisAgent();
