@@ -1,43 +1,67 @@
 /**
  * src/engine/agent.js
- * Mesin utama yang menghubungkan AI (Ollama) dengan input pengguna.
+ * Mesin utama dengan fitur Memori (History) dan State Management.
  */
 
-// 1. Import library versi terbaru untuk Ollama
 const { ChatOllama } = require("@langchain/ollama");
-
-// 2. Import file prompt yang sudah kita buat sebelumnya
 const _prompt = require("./prompt");
 
 class JarvisAgent {
     constructor() {
-        // Inisialisasi Model menggunakan Ollama secara lokal
         this.model = new ChatOllama({
             model: "qwen2.5:7b",
             temperature: 0,
         });
+        
+        // Memori jangka pendek (Array lokal)
+        this.history = []; 
+        // Batasi memori (misal: ingat 6 pasang percakapan terakhir)
+        this.maxHistory = 12; 
+        
+        // Status awal sistem
+        this.currentState = "Menunggu perintah pengguna (Idle)"; 
     }
 
     /**
-     * Fungsi utama untuk memproses input teks dari user.
-     * @param {string} userInput - Teks yang diucapkan/diketik oleh pengguna.
-     * @returns {Promise<string>} - Jawaban dari Jarvis.
+     * Memperbarui status/state Jarvis dari luar (misal dari main.js atau file tools)
+     * @param {string} newState - Status terbaru
      */
+    updateState(newState) {
+        this.currentState = newState;
+    }
+
     async processInput(userInput) {
         try {
-            // Menggabungkan instruksi dasar (systemPrompt) dengan pertanyaan pengguna
-            const fullPrompt = `${_prompt.systemPrompt}\n\nUser: ${userInput}`;
-            
-            // Memanggil model AI untuk menghasilkan jawaban
+            // 1. Simpan input user ke memori
+            this.history.push(`User: ${userInput}`);
+
+            // 2. Cegah memori terlalu panjang (buang yang paling lama jika melebihi batas)
+            if (this.history.length > this.maxHistory) {
+                this.history.shift(); 
+            }
+
+            // 3. Susun konteks dari history array
+            const conversationHistory = this.history.join("\n");
+
+            // 4. Ambil instruksi dinamis dengan state terbaru
+            const systemInstruction = _prompt.getDynamicPrompt(this.currentState);
+
+            // 5. Gabungkan instruksi, riwayat, dan pemicu jawaban
+            const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
+
+            // 6. Panggil LLM
             const response = await this.model.invoke(fullPrompt);
-            
-            return response.content;
+            const answer = response.content.trim();
+
+            // 7. Simpan jawaban AI ke memori untuk konteks selanjutnya
+            this.history.push(`Jarvis: ${answer}`);
+
+            return answer;
         } catch (error) {
             console.error("Error di JarvisAgent:", error);
-            return "Maaf, saya mengalami kendala teknis.";
+            return "Maaf, saya mengalami kendala teknis dalam memproses memori.";
         }
     }
 }
 
-// 3. Mengekspor class JarvisAgent agar bisa dijalankan oleh test_brain.js dan main.js
 module.exports = new JarvisAgent();

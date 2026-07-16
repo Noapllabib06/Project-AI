@@ -1,50 +1,40 @@
-// test_brain.js
+/**
+ * test_brain.js
+ * Script untuk menguji Memori dan State Management Jarvis
+ */
+
 const agent = require('./src/engine/agent');
-const { open_web_tool } = require('./src/tools/web_tools');
-const { yt_search_tool } = require('./src/tools/yt_tools');
 
 async function runTest() {
-    console.log("--- TEST FASE 1 (Otak Dasar) ---");
+    console.log("=== MEMULAI TEST FASE 3: KECERDASAN & MEMORI ===\n");
+
+    // --- TEST 1: Menguji Memori (Konteks Percakapan) ---
+    console.log("--- TEST 1: Memori Percakapan ---");
     
-    const tests = [
-        "Siapa namamu?",
-        "Apa itu kecerdasan buatan?",
-        "Bisa jelaskan apa itu quantum computing secara singkat?"
-    ];
+    let input1 = "Halo Jarvis, perkenalkan nama saya Alex. Saya sangat suka memancing.";
+    console.log(`User: ${input1}`);
+    let respons1 = await agent.processInput(input1);
+    console.log(`Jarvis: ${respons1}\n`);
 
-    for (let t of tests) {
-        console.log(`\nUser: ${t}`);
-        const response = await agent.processInput(t);
-        console.log(`Jarvis: ${response}`);
-    }
+    let input2 = "Apakah kamu ingat siapa nama saya dan apa hobi saya?";
+    console.log(`User: ${input2}`);
+    let respons2 = await agent.processInput(input2);
+    console.log(`Jarvis: ${respons2}\n`);
 
-    console.log("\n--- TEST FASE 2 (Integrasi Tools) ---");
+    // --- TEST 2: Menguji State Management ---
+    console.log("--- TEST 2: Perubahan Status (State) ---");
+    
+    console.log("[SYSTEM] Mengubah status Jarvis menjadi: Sedang memutar lagu Lofi di YouTube...");
+    // Mengubah state/status Jarvis dari luar
+    agent.updateState("Sedang memutar lagu Lofi di YouTube");
 
-    const toolTests = [
-        "Buka google.com",
-        "Cari video musik santai di YouTube",
-        "Buka youtube.com/watch?v=dQw4w9WgXcQ"
-    ];
+    let input3 = "Jarvis, apa yang sedang kamu lakukan sekarang?";
+    console.log(`User: ${input3}`);
+    let respons3 = await agent.processInput(input3);
+    console.log(`Jarvis: ${respons3}\n`);
 
-    for (let t of toolTests) {
-        console.log(`\nUser: ${t}`);
-        // Di sini kita memanggil fungsi yang sama seperti di main.js untuk testing
-        
-        if (t.toLowerCase().includes("buka") || t.toLowerCase().includes("open")) {
-            const result = open_web_tool(t);
-            console.log(`System Action: ${result}`);
-        } else if (t.toLowerCase().includes("youtube") || t.toLowerCase().includes("cari video")) {
-            const result = yt_search_tool(t);
-            console.log(`System Action: ${result}`);
-        }
-    }
-
-    console.log("\n--- TESTING SELESAI ---");
+    console.log("=== TESTING SELESAI ===");
 }
 
-runTest().then(() => {
-    process.exit(0);
-}).catch(err => {
-    console.error("Terjadi kesalahan saat testing:", err);
-    process.exit(1);
-});
+// Jalankan fungsi test
+runTest();
