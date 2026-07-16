@@ -1,7 +1,7 @@
 # 🤖 JARVIS AI Agent
 
 **Just For Fun Project**
-**Speech To Text is on Problem, So it can't be Used**
+Speech To Text is on Problem, So it can't be Used
 
 Asisten AI pribadi yang berjalan **100% lokal** di komputer Anda menggunakan Ollama. Bisa chat, browsing web, putar musik/video YouTube, dan manajemen kredensial terenkripsi.
 
