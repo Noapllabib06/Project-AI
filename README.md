@@ -13,7 +13,6 @@ Asisten AI pribadi yang berjalan **100% lokal** di komputer Anda menggunakan Oll
 | 🔍 **Cari Internet** | "cari berita terbaru" → scraping Google/DuckDuckGo |
 | 🎵 **Putar YouTube Music** | "putar lagu bohemian rhapsody", "putar musik jazz" |
 | 🎬 **Putar Video YouTube** | "putar video tutorial", "tonton trailer film" |
-| 🔐 **Credential Manager** | Simpan password terenkripsi (AES-256) lokal |
 | 📄 **Baca Halaman Web** | "baca artikel https://..." → scraping konten |
 | 🎤 **Voice Input** | Dukungan speech-to-text (browser) |
 | 📝 **Logging System** | Debug & maintain dengan log berwarna |
@@ -82,17 +81,14 @@ src/
 │   ├── index.html       # UI utama
 │   ├── style.css        # Desain cyberpunk
 │   └── ui_handler.js    # Logika frontend
-└── utils/
-    ├── logger.js        # System logging
-    ├── credentials.js   # Password manager (enkripsi)
-    └── audio_utils.js   # TTS/STT
+└── utils/ "POSTPONED"
+    
 ```
 
 ## 🔒 Keamanan
 
 - ✅ **100% lokal** — Tidak ada data dikirim ke server manapun
 - ✅ **AI Model** — Berjalan di komputer sendiri via Ollama
-- ✅ **Password terenkripsi** — AES-256-CBC, key unik per komputer
 - ✅ **Tidak ada cloud** — Semua data tetap di mesin Anda
 
 ## 📦 Dependencies
