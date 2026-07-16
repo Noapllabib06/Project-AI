@@ -1,6 +1,6 @@
 // src/main.js
 // Electron Main Process - Window Management, IPC, Tool Orchestrator
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const agent = require('./engine/agent');
 const { open_web_tool, scrape_web_tool, search_web_tool } = require('./tools/web_tools');
@@ -20,6 +20,8 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            // Microphone permissions untuk voice input
+            permissions: ['microphone', 'audio-capture'],
         },
     });
 
@@ -160,6 +162,16 @@ ipcMain.on('window-ready', () => {
 // ============ APP LIFECYCLE ============
 
 app.whenReady().then(() => {
+    // Set permissions untuk microphone
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+        if (permission === 'media' || permission === 'microphone' || permission === 'audio-capture') {
+            console.log('[Main] Microphone permission granted');
+            callback(true);
+            return;
+        }
+        callback(false);
+    });
+
     createWindow();
 
     app.on('activate', () => {
