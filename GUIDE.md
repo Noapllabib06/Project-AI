@@ -161,10 +161,10 @@ project-root/
 │   │   ├── index.html        # UI utama
 │   │   ├── style.css         # Desain futuristik
 │   │   └── ui_handler.js     # Logika frontend
-│   └── utils/
-│       ├── logger.js         # System logging
-│       ├── credentials.js    # Manajemen password
-│       └── audio_utils.js    # Suara (TTS/STT)
+│   └── utils/ "POSTPONED"
+│       ├── logger.js         
+│       ├── credentials.js   
+│       └── audio_utils.js    
 ├── logs/                     # File log (otomatis dibuat)
 ├── package.json
 └── GUIDE.md                  # Buku panduan ini
@@ -235,7 +235,7 @@ Jarvis juga bisa diajak ngobrol biasa:
 - "Ceritakan tentang dirimu"
 - "Apa yang bisa kamu lakukan?"
 
-### 🔐 Manajemen Kredensial (Password)
+### 🔐 Manajemen Kredensial (Password) DITUNDA !
 
 > ⚠️ **PENTING:** Semua password disimpan TERENKRIPSI di komputer Anda sendiri!
 
@@ -285,7 +285,7 @@ Jarvis juga bisa diajak ngobrol biasa:
 - **State Management** — Status sistem dinamis
 - **Smart Intent Detection** — Deteksi perintah otomatis
 
-### 🔐 Credential Manager
+### 🔐 Credential Manager DITUNDA !!
 - **Enkripsi AES-256** — Password aman
 - **Local Only** — Tidak pernah ke internet
 - **Auto Key Generation** — Key unik per komputer
