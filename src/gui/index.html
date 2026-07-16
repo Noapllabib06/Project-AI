@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS - AI Assistant</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Title Bar -->
+    <div class="title-bar" id="titleBar">
+        <div class="title-bar-drag">
+            <div class="app-logo">
+                <span class="logo-icon">◈</span>
+                <span class="logo-text">J.A.R.V.I.S</span>
+            </div>
+        </div>
+        <div class="title-bar-controls">
+            <button class="control-btn minimize" id="minimizeBtn" title="Minimize">─</button>
+            <button class="control-btn maximize" id="maximizeBtn" title="Maximize">□</button>
+            <button class="control-btn close" id="closeBtn" title="Close">✕</button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Canvas Background -->
+        <canvas id="cyberCanvas"></canvas>
+
+        <!-- AI Avatar / Orb -->
+        <div class="ai-orb-container">
+            <div class="ai-orb" id="aiOrb">
+                <div class="orb-ring"></div>
+                <div class="orb-core"></div>
+            </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="chat-area">
+            <div class="chat-header">
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="status-dot"></span>
+                    <span class="status-text" id="statusText">Menunggu perintah...</span>
+                </div>
+                <div class="model-info">🧠 qwen2.5:7b (Lokal)</div>
+            </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <div class="message ai-message">
+                    <div class="message-icon">◈</div>
+                    <div class="message-content">
+                        <p>Halo! Saya Jarvis, asisten AI pribadi Anda. Ada yang bisa saya bantu?</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <div class="input-wrapper">
+                    <input type="text" id="userInput" class="chat-input" placeholder="Ketik perintah Anda..." autofocus>
+                    <button class="voice-btn" id="voiceBtn" title="Voice Input">🎤</button>
+                    <button class="send-btn" id="sendBtn" title="Send">
+                        <span class="send-icon">→</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="ui_handler.js"></script>
+</body>
+</html>
