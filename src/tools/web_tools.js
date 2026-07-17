@@ -367,13 +367,29 @@ async function search_web_tool(query) {
             if (parsed && parsed.length > 20) {
                 results += parsed;
             } else {
-                // Fallback parse: ambil semua link
-                $('a').each((i, el) => {
-                    if (i >= 10) return false;
+                // Better fallback: ambil semua teks yang relevan
+                $('h3, h2, a, span, p, div').each((i, el) => {
+                    if (i >= 20) return false;
                     const href = $(el).attr('href');
                     const text = $(el).text().trim();
-                    if (href && text && href.startsWith('http') && text.length > 15) {
-                        results += `• ${text}\n  ${href}\n\n`;
+                    if (text && text.length > 20) {
+                        if (href && href.startsWith('http')) {
+                            results += `• ${text}\n  ${href}\n\n`;
+                        } else if (!href) {
+                            results += `${text}\n\n`;
+                        }
+                    }
+                });
+            }
+            
+            // If still too short, try to get more content from body
+            if (results.length < 100) {
+                const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+                const sentences = bodyText.match(/[^.!?]+[.!?]+/g) || [];
+                sentences.slice(0, 10).forEach(s => {
+                    const trimmed = s.trim();
+                    if (trimmed.length > 30) {
+                        results += `${trimmed}\n\n`;
                     }
                 });
             }

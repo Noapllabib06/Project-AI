@@ -323,9 +323,18 @@ class JarvisAgent {
             if (toolResult && intent.tool !== 'chat') {
                 this.history.push(`User: ${userInput}`);
                 if (this.history.length > this.maxHistory) this.history.shift();
-                this.history.push(`Jarvis: ${toolResult}`);
-                logger.jarvis(toolResult.substring(0, 200));
-                return toolResult;
+                // Inject tool result as context for the LLM
+                this.history.push(`[Tool Result: ${intent.tool}]\n${toolResult}`);
+                // Call LLM again to generate final answer from tool result
+                const conversationHistory = this.history.join("\n");
+                const systemInstruction = _prompt.getDynamicPrompt(this.currentState) + "\n\nBerikan jawaban natural dalam bahasa Indonesia berdasarkan hasil tool di atas. Jangan tampilkan JSON.";
+                const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
+                const response = await this.model.invoke(fullPrompt);
+                const finalAnswer = response.content.trim();
+                this.history.push(`Jarvis: ${finalAnswer}`);
+                if (this.history.length > this.maxHistory) this.history.shift();
+                logger.jarvis(`${finalAnswer.substring(0, 200)} (${Date.now() - startTime}ms)`);
+                return finalAnswer;
             }
 
             // Chat biasa → AI dengan JSON output
@@ -358,9 +367,17 @@ class JarvisAgent {
                 const toolResult = await this.executeTool(tool, query);
                 
                 if (toolResult) {
-                    this.history.push(`Jarvis: ${toolResult}`);
-                    logger.jarvis(toolResult.substring(0, 200));
-                    return toolResult;
+                    // Feed tool result back to LLM for natural-language answer
+                    this.history.push(`[Tool Result: ${tool}]\n${toolResult}`);
+                    const conversationHistory2 = this.history.join("\n");
+                    const systemInstruction2 = _prompt.getDynamicPrompt(this.currentState) + "\n\nBerikan jawaban natural dalam bahasa Indonesia berdasarkan hasil tool di atas. Jangan tampilkan JSON.";
+                    const fullPrompt2 = `${systemInstruction2}\n\nRiwayat Percakapan:\n${conversationHistory2}\n\nJarvis:`;
+                    const response2 = await this.model.invoke(fullPrompt2);
+                    const finalAnswer2 = response2.content.trim();
+                    this.history.push(`Jarvis: ${finalAnswer2}`);
+                    if (this.history.length > this.maxHistory) this.history.shift();
+                    logger.jarvis(`${finalAnswer2.substring(0, 200)} (${Date.now() - startTime}ms)`);
+                    return finalAnswer2;
                 }
                 
                 // If tool returned null, fallback to AI response
@@ -394,12 +411,25 @@ class JarvisAgent {
             const toolResult = await this.executeTool(intent.tool, intent.query);
             
             if (toolResult && intent.tool !== 'chat') {
-                if (onTokenCallback) onTokenCallback(toolResult);
                 this.history.push(`User: ${userInput}`);
                 if (this.history.length > this.maxHistory) this.history.shift();
-                this.history.push(`Jarvis: ${toolResult}`);
-                logger.jarvis(`${toolResult.substring(0, 200)} (${Date.now() - startTime}ms)`);
-                return toolResult;
+                // Inject tool result as context for the LLM
+                this.history.push(`[Tool Result: ${intent.tool}]\n${toolResult}`);
+                // Call LLM again to generate final answer from tool result
+                const conversationHistory = this.history.join("\n");
+                const systemInstruction = _prompt.getDynamicPrompt(this.currentState) + "\n\nBerikan jawaban natural dalam bahasa Indonesia berdasarkan hasil tool di atas. Jangan tampilkan JSON.";
+                const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
+                const stream = await this.model.stream(fullPrompt);
+                let fullAnswer = "";
+                for await (const chunk of stream) {
+                    const token = chunk.content;
+                    fullAnswer += token;
+                    if (onTokenCallback) onTokenCallback(token);
+                }
+                this.history.push(`Jarvis: ${fullAnswer.trim()}`);
+                if (this.history.length > this.maxHistory) this.history.shift();
+                logger.jarvis(`${fullAnswer.trim().substring(0, 200)} (${Date.now() - startTime}ms)`);
+                return fullAnswer.trim();
             }
 
             // Chat biasa → AI streaming

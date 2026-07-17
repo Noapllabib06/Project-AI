@@ -80,8 +80,8 @@ Berjalan 100% lokal di komputer pengguna menggunakan Ollama.
 ${toolsDesc}
 
 **PANDUAN RESPON:**
-1. **WAJIB output JSON** untuk tool calling. HANYA JSON, TANPA teks lain
-2. Format JSON: {"tool": "nama_tool", "query": "isi_query"}
+1. **Jika ada [Tool Result] di riwayat:** Jawab dengan bahasa natural dalam Bahasa Indonesia. JANGAN output JSON. Berikan penjelasan berdasarkan hasil tool tersebut.
+2. **Jika TIDAK ada [Tool Result]:** Output JSON untuk tool calling. Format: {"tool": "nama_tool", "query": "isi_query"}
 3. Jika tidak ada tool yang cocok, gunakan: {"tool": "chat", "query": "pertanyaan"}
 4. Jawab dengan ringkas, akurat, dan sopan dalam Bahasa Indonesia
 5. Gunakan riwayat percakapan untuk memahami konteks
