@@ -6,6 +6,14 @@ const agent = require('./engine/agent');
 const { open_web_tool, scrape_web_tool, search_web_tool } = require('./tools/web_tools');
 const { yt_search_tool, play_youtube_music, play_youtube_video, getVideoInfo } = require('./tools/yt_tools');
 
+// Suppress Chromium audio stream errors
+process.env.ELECTRON_NO_ATTACHED_CONSOLE = '1';
+
+// Add Electron command line switches to suppress audio stream errors
+if (process.defaultApp || /[\\/]electron/.test(process.execPath)) {
+    app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess');
+}
+
 let mainWindow;
 
 function createWindow() {
@@ -21,7 +29,9 @@ function createWindow() {
             contextIsolation: true,
             nodeIntegration: false,
             // Microphone permissions untuk voice input
-            permissions: ['microphone', 'audio-capture'],
+            permissions: ['microphone', 'audio-capture', 'media'],
+            // Enable audio capture
+            audioCapture: true,
         },
     });
 
@@ -162,10 +172,20 @@ ipcMain.on('window-ready', () => {
 // ============ APP LIFECYCLE ============
 
 app.whenReady().then(() => {
-    // Set permissions untuk microphone
+    // Set permissions untuk microphone dan audio
     session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
         if (permission === 'media' || permission === 'microphone' || permission === 'audio-capture') {
             console.log('[Main] Microphone permission granted');
+            callback(true);
+            return;
+        }
+        callback(false);
+    });
+
+    // Set permission untuk media streams (audio)
+    session.defaultSession.setDevicePermissionHandler((details, callback) => {
+        if (details.deviceType === 'audioinput') {
+            console.log('[Main] Audio input device permission granted');
             callback(true);
             return;
         }

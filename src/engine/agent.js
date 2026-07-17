@@ -10,6 +10,8 @@ const { ChatOllama } = require("@langchain/ollama");
 const _prompt = require("./prompt");
 const logger = require("../utils/logger");
 const credentialManager = require("../utils/credentials");
+const { parseAndValidateAIOutput, generateFeedbackMessage } = require("./json_validator");
+const { executeWithFeedbackLoop } = require("./feedback_loop");
 const { open_web_tool, scrape_web_tool, search_web_tool, extractUrl, KNOWN_SITES } = require("../tools/web_tools");
 const { yt_search_tool, play_youtube_music, play_youtube_video, getVideoInfo } = require("../tools/yt_tools");
 
@@ -197,7 +199,11 @@ class JarvisAgent {
             // Hapus "dan buka ..." di akhir
             query = query.replace(/\s+dan\s+(buka|open).*/i, '').trim();
             
-            if (query) {
+            // Don't search if query starts with question words
+            const questionWords = ['apa', 'bagaimana', 'mengapa', 'kenapa', 'siapa', 'kapan', 'dimana', 'apakah', 'maksud', 'definisi', 'pengertian'];
+            const isQuestion = questionWords.some(q => query.toLowerCase().startsWith(q));
+            
+            if (query && !isQuestion) {
                 logger.logIntent(input, 'search_web', query);
                 return { tool: 'search_web', query };
             }
@@ -322,7 +328,7 @@ class JarvisAgent {
                 return toolResult;
             }
 
-            // Chat biasa → AI
+            // Chat biasa → AI dengan JSON output
             this.history.push(`User: ${userInput}`);
             if (this.history.length > this.maxHistory) this.history.shift();
 
@@ -331,13 +337,45 @@ class JarvisAgent {
             const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
 
             const response = await this.model.invoke(fullPrompt);
-            const answer = response.content.trim();
+            const aiOutput = response.content.trim();
 
-            this.history.push(`Jarvis: ${answer}`);
-            const duration = Date.now() - startTime;
-            logger.jarvis(`${answer.substring(0, 200)} (${duration}ms)`);
+            // Validate JSON output
+            const validation = parseAndValidateAIOutput(aiOutput);
             
-            return answer;
+            if (validation.success) {
+                // Valid JSON - execute tool
+                const { tool, query } = validation.data;
+                logger.debug('Agent', `AI output validated: tool=${tool}, query=${query.substring(0, 50)}`);
+                
+                // For chat tool, return the query text directly (not JSON wrapper)
+                if (tool === 'chat') {
+                    this.history.push(`Jarvis: ${query}`);
+                    const duration = Date.now() - startTime;
+                    logger.jarvis(`${query.substring(0, 200)} (${duration}ms)`);
+                    return query;
+                }
+                
+                const toolResult = await this.executeTool(tool, query);
+                
+                if (toolResult) {
+                    this.history.push(`Jarvis: ${toolResult}`);
+                    logger.jarvis(toolResult.substring(0, 200));
+                    return toolResult;
+                }
+                
+                // If tool returned null, fallback to AI response
+                this.history.push(`Jarvis: ${aiOutput}`);
+                const duration = Date.now() - startTime;
+                logger.jarvis(`${aiOutput.substring(0, 200)} (${duration}ms)`);
+                return aiOutput;
+            } else {
+                // Invalid JSON - fallback to chat
+                logger.warn('Agent', `Invalid JSON output from AI: ${validation.error}`);
+                this.history.push(`Jarvis: ${aiOutput}`);
+                const duration = Date.now() - startTime;
+                logger.jarvis(`${aiOutput.substring(0, 200)} (${duration}ms)`);
+                return aiOutput;
+            }
         } catch (error) {
             logger.logError('Agent.processInput', error);
             return "❌ Maaf, terjadi kesalahan. Silakan coba lagi.";

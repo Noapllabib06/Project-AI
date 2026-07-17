@@ -4,6 +4,7 @@ const { exec } = require('child_process');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const logger = require('../utils/logger');
+const { processWebContent } = require('../engine/context_manager');
 
 // Daftar situs populer dengan URL langsung
 // Gunakan Map agar bisa lookup case-insensitive dan partial match
@@ -232,7 +233,7 @@ function open_web_tool(input) {
 }
 
 /**
- * Mengambil dan membaca konten dari halaman web
+ * Mengambil dan membaca konten dari halaman web dengan chunking
  */
 async function scrape_web_tool(url) {
     const startTime = Date.now();
@@ -271,16 +272,27 @@ async function scrape_web_tool(url) {
             text = $('body').text().replace(/\s+/g, ' ').trim();
         }
         
-        // Batasi panjang output
-        const maxLength = 4000;
-        if (text.length > maxLength) {
-            text = text.substring(0, maxLength) + '\n\n... [konten terpotong, terlalu panjang]';
-        }
-        
         const duration = Date.now() - startTime;
-        logger.tool('scrape_web_tool', `Success (${duration}ms, ${text.length} chars)`);
         
-        return `📄 **Konten dari ${targetUrl}**\n\n${text}`;
+        // Process dengan chunking jika teks panjang
+        if (text.length > 1500) {
+            const { chunks, contextManager, stats } = processWebContent(text, targetUrl, 1500);
+            logger.tool('scrape_web_tool', `Chunked: ${stats.totalChunks} chunks, ${stats.totalChars} chars (${duration}ms)`);
+            
+            // Return summary + instruction untuk AI
+            const summary = chunks.find(c => c.isSummary) || chunks[0];
+            const conclusion = chunks.find(c => c.isConclusion) || chunks[chunks.length - 1];
+            
+            return `📄 **Konten dari ${targetUrl}**\n\n` +
+                   `📊 Statistik: ${stats.totalChunks} chunks, ${stats.totalChars} total chars\n\n` +
+                   `📝 **Ringkasan:**\n${summary.text}\n\n` +
+                   `💡 **Info:** Konten telah di-chunking. AI akan mengambil bagian yang relevan berdasarkan konteks percakapan.\n\n` +
+                   `🔗 **Sumber:** ${targetUrl}`;
+        } else {
+            // Teks pendek, tidak perlu chunking
+            logger.tool('scrape_web_tool', `Success (${duration}ms, ${text.length} chars)`);
+            return `📄 **Konten dari ${targetUrl}**\n\n${text}`;
+        }
     } catch (error) {
         logger.error('scrape_web_tool', error, { url });
         return `❌ Gagal membaca halaman: ${error.message}`;
@@ -394,7 +406,15 @@ async function search_web_tool(query) {
 function extractUrl(text) {
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const match = text.match(urlRegex);
-    return match ? match[0] : null;
+    if (!match) return null;
+    
+    let url = match[0];
+    
+    // Bersihkan karakter tidak valid di akhir URL
+    // Hapus tanda kurung, kurung siku, dll yang mungkin menempel
+    url = url.replace(/[)\]>]+$/, '');
+    
+    return url;
 }
 
 module.exports = { open_web_tool, scrape_web_tool, search_web_tool, extractUrl, KNOWN_SITES };

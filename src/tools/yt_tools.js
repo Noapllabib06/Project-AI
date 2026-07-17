@@ -3,6 +3,7 @@
 const play = require('play-dl');
 const { exec } = require('child_process');
 const logger = require('../utils/logger');
+const { processYouTubeContent } = require('../engine/context_manager');
 
 /**
  * Ekstrak video ID dari URL YouTube
@@ -97,7 +98,7 @@ async function yt_search_tool(query) {
 }
 
 /**
- * Mendapatkan info video dari URL YouTube
+ * Mendapatkan info video dari URL YouTube dengan chunking untuk description
  * play-dl v1.9.7: play.video_info(url) → { video_details: {...} }
  */
 async function getVideoInfo(url) {
@@ -106,15 +107,35 @@ async function getVideoInfo(url) {
     
     try {
         const info = await play.video_info(url);
-        // play-dl v1.9.7 mengembalikan objek dengan properti video_details
         const details = info.video_details || info;
         
+        const title = details.title || 'Unknown';
+        const description = details.description || '';
+        const channel = details.channel?.name || details.channelName || 'Unknown';
+        
+        // Process description dengan chunking jika panjang
+        let processedDescription = description;
+        let descriptionInfo = '';
+        
+        if (description.length > 1500) {
+            const { chunks, stats } = processYouTubeContent(description, title, 1500);
+            const summary = chunks.find(c => c.isSummary) || chunks[0];
+            const conclusion = chunks.find(c => c.isConclusion) || chunks[chunks.length - 1];
+            
+            processedDescription = summary.text;
+            descriptionInfo = `\n\n📊 Deskripsi di-chunking: ${stats.totalChunks} chunks (${stats.totalChars} chars)`;
+            logger.tool('getVideoInfo', `Description chunked: ${stats.totalChunks} chunks`);
+        } else if (description.length > 200) {
+            processedDescription = description.substring(0, 200) + '...';
+        }
+        
         const result = {
-            title: details.title || 'Unknown',
-            description: (details.description || '').substring(0, 200),
+            title: title,
+            description: processedDescription,
+            descriptionInfo: descriptionInfo,
             duration: details.durationRaw || 'N/A',
             views: details.views || 0,
-            channel: (details.channel?.name || details.channelName || 'Unknown'),
+            channel: channel,
             thumbnail: (details.thumbnails && details.thumbnails[0]?.url) || (details.thumbnail?.url) || '',
             url: url,
             videoId: extractVideoId(url)
@@ -124,10 +145,10 @@ async function getVideoInfo(url) {
         return result;
     } catch (error) {
         logger.error('getVideoInfo', error, { url });
-        // Fallback: return info minimal tanpa detail
         return {
             title: 'Unknown',
             description: '',
+            descriptionInfo: '',
             duration: 'N/A',
             views: 0,
             channel: 'Unknown',
