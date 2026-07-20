@@ -25,7 +25,30 @@ function extractJsonFromText(text) {
             const parsed = JSON.parse(match[0]);
             return parsed;
         } catch (e) {
-            logger.warn('JsonValidator', `Found JSON-like text but invalid: ${match[0].substring(0, 100)}`);
+            logger.warn('JsonValidator', `JSON.parse gagal, mencoba regex fallback untuk multiline...`);
+            
+            // === REGEX FALLBACK UNTUK MULTILINE STRING ===
+            // Saat LLM memasukkan literal newline di dalam string query (misal kode HTML),
+            // JSON.parse akan gagal. Regex ini mengekstrak tool dan query secara manual.
+            const toolMatch = match[0].match(/"tool"\s*:\s*"([^"]+)"/);
+            // Ambil semua teks di dalam query dari tanda kutip buka hingga sebelum kurung kurawal akhir
+            const queryMatch = match[0].match(/"query"\s*:\s*"([\s\S]*)"\s*\}?/);
+
+            if (toolMatch && queryMatch) {
+                let extractedQuery = queryMatch[1];
+                // Bersihkan tanda kutip penutup jika ikut terbawa
+                if (extractedQuery.endsWith('"')) {
+                    extractedQuery = extractedQuery.slice(0, -1);
+                }
+                
+                logger.debug('JsonValidator', `Regex fallback berhasil: tool=${toolMatch[1]}, query_length=${extractedQuery.length}`);
+                return {
+                    tool: toolMatch[1],
+                    query: extractedQuery.trim()
+                };
+            }
+            
+            logger.warn('JsonValidator', `Regex fallback juga gagal: ${match[0].substring(0, 100)}`);
             return null;
         }
     }
@@ -59,6 +82,7 @@ function validateToolCall(json) {
         'open_web', 'search_web', 'scrape_web',
         'play_music', 'play_video', 'search_youtube',
         'save_credential', 'list_credentials', 'delete_credential',
+        'create_file',
         'chat'
     ];
 

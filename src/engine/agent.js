@@ -1,9 +1,9 @@
 /**
  * src/engine/agent.js
- * Mesin utama dengan fitur Memori (History) dan State Management.
- * Menggunakan Ollama untuk model AI lokal.
- * Terintegrasi dengan Web Tools & YouTube Tools sebagai AI Agent universal.
- * V3 - Intent detection lebih cerdas, handle multi-intent, "bisa kamu", "masuk ke", dll.
+ * Mesin utama dengan alur Single-Pass yang stabil.
+ * LLM (Qwen 2.5) memutuskan alat yang digunakan melalui output JSON.
+ * IntentDetector hanya sebagai fast-path untuk perintah sederhana.
+ * V5 - Single-Pass, stabil, tanpa loop
  */
 
 const { ChatOllama } = require("@langchain/ollama");
@@ -14,6 +14,7 @@ const { parseAndValidateAIOutput, generateFeedbackMessage } = require("./json_va
 const { executeWithFeedbackLoop } = require("./feedback_loop");
 const { open_web_tool, scrape_web_tool, search_web_tool, extractUrl, KNOWN_SITES } = require("../tools/web_tools");
 const { yt_search_tool, play_youtube_music, play_youtube_video, getVideoInfo } = require("../tools/yt_tools");
+const { createFile } = require("../tools/file_tools");
 
 class JarvisAgent {
     constructor() {
@@ -24,7 +25,7 @@ class JarvisAgent {
         
         // Memori jangka pendek (Array lokal)
         this.history = []; 
-        this.maxHistory = 12; 
+        this.maxHistory = 12;
         
         // Status awal sistem
         this.currentState = "Menunggu perintah pengguna (Idle)"; 
@@ -41,11 +42,10 @@ class JarvisAgent {
     }
 
     /**
-     * Bersihkan input dari kata-kata pengantar seperti "bisa kamu", "tolong", "kak", dll
+     * Bersihkan input dari kata-kata pengantar
      */
     cleanInput(input) {
         let cleaned = input.trim();
-        // Hapus pengantar umum di awal kalimat
         cleaned = cleaned.replace(/^(bisa\s+(kamu|anda|kak)\s+)/i, '');
         cleaned = cleaned.replace(/^(tolong\s+(kamu|anda|kak)?\s*)/i, '');
         cleaned = cleaned.replace(/^(kak\s+)/i, '');
@@ -55,7 +55,7 @@ class JarvisAgent {
     }
 
     /**
-     * Smart Intent Detection V3
+     * Fast-path Intent Detection — hanya untuk perintah SANGAT jelas.
      */
     detectIntent(input) {
         const lower = input.toLowerCase().trim();
@@ -64,174 +64,14 @@ class JarvisAgent {
         const lowerCleaned = cleaned.toLowerCase();
         
         logger.debug('IntentDetector', `Original: "${input.substring(0, 100)}"`);
-        logger.debug('IntentDetector', `Cleaned: "${cleaned.substring(0, 100)}"`);
-        
-        // ==========================================
-        // PRIORITAS 1: YOUTUBE MUSIC (tertinggi)
-        // ==========================================
-        // "putar lagu ...", "putar musik ...", "mainkan lagu ..."
-        // "buka youtube music dan putar lagu ..." → ambil bagian "putar lagu"
-        // "bisa kamu putar lagu ..."
-        const musicKeywords = ['putar lagu', 'putar musik', 'mainkan lagu', 'mainkan musik', 
-                               'play music', 'play song', 'putarkan lagu', 'putarkan musik'];
-        const hasMusicIntent = musicKeywords.some(k => lowerCleaned.includes(k)) ||
-                               (lowerCleaned.includes('youtube music') && 
-                                (lowerCleaned.includes('putar') || lowerCleaned.includes('mainkan') || lowerCleaned.includes('play')));
-        
-        if (hasMusicIntent && !lowerCleaned.includes('video')) {
-            // Ekstrak query setelah keyword musik
-            let query = cleaned;
-            for (const kw of musicKeywords) {
-                const idx = query.toLowerCase().indexOf(kw);
-                if (idx !== -1) {
-                    query = query.substring(idx + kw.length).trim();
-                    break;
-                }
-            }
-            // Hapus "di youtube music" di akhir
-            query = query.replace(/\s+di\s+(youtube\s+)?music/i, '').trim();
-            // Hapus "dan buka ..." di akhir
-            query = query.replace(/\s+dan\s+(buka|open).*/i, '').trim();
-            
-            if (query) {
-                logger.logIntent(input, 'play_music', query);
-                return { tool: 'play_music', query };
-            }
+
+        // Fast-path: "buka lagi" → buka URL terakhir
+        if ((lowerCleaned.includes('buka lagi') || lowerCleaned === 'buka') && this.lastOpenedUrl) {
+            logger.logIntent(input, 'open_web', this.lastOpenedUrl);
+            return { tool: 'open_web', query: this.lastOpenedUrl };
         }
-        
-        // ==========================================
-        // PRIORITAS 2: YOUTUBE VIDEO
-        // ==========================================
-        const videoKeywords = ['putar video', 'mainkan video', 'play video', 'tonton ', 'nonton '];
-        const hasVideoIntent = videoKeywords.some(k => lowerCleaned.includes(k)) ||
-                               (lowerCleaned.includes('youtube') && !lowerCleaned.includes('music') &&
-                                (lowerCleaned.includes('putar') || lowerCleaned.includes('mainkan') || 
-                                 lowerCleaned.includes('play') || lowerCleaned.includes('tonton') || 
-                                 lowerCleaned.includes('nonton')));
-        
-        if (hasVideoIntent) {
-            let query = cleaned;
-            for (const kw of videoKeywords) {
-                const idx = query.toLowerCase().indexOf(kw);
-                if (idx !== -1) {
-                    query = query.substring(idx + kw.length).trim();
-                    break;
-                }
-            }
-            query = query.replace(/\s+di\s+youtube/i, '').trim();
-            query = query.replace(/\s+dan\s+(buka|open).*/i, '').trim();
-            
-            if (query) {
-                logger.logIntent(input, 'play_video', query);
-                return { tool: 'play_video', query };
-            }
-        }
-        
-        // ==========================================
-        // PRIORITAS 3: WEB NAVIGATION
-        // ==========================================
-        // "buka youtube", "buka google.com", "buka lms telkom"
-        // "bisa kamu buka youtube", "masuk ke lms", "buka lagi"
-        const openKeywords = ['buka ', 'open ', 'browse ', 'masuk ke ', 'masuk ', 'kunjungi '];
-        const hasOpenIntent = openKeywords.some(k => lowerCleaned.startsWith(k) || lowerCleaned.includes(` ${k}`));
-        
-        if (hasOpenIntent) {
-            // Handle "buka lagi" → buka URL terakhir
-            if (lowerCleaned.includes('buka lagi') || lowerCleaned === 'buka') {
-                if (this.lastOpenedUrl) {
-                    logger.logIntent(input, 'open_web', this.lastOpenedUrl);
-                    return { tool: 'open_web', query: this.lastOpenedUrl };
-                }
-                // Fallback ke search
-                logger.logIntent(input, 'search_web', 'buka lagi');
-                return { tool: 'search_web', query: 'buka lagi' };
-            }
-            
-            // Ekstrak nama situs/URL
-            let siteName = cleaned;
-            for (const kw of openKeywords) {
-                const idx = siteName.toLowerCase().indexOf(kw);
-                if (idx !== -1) {
-                    siteName = siteName.substring(idx + kw.length).trim();
-                    break;
-                }
-            }
-            // Hapus "di browser" di akhir
-            siteName = siteName.replace(/\s+di\s+(browser|web)/i, '').trim();
-            // Hapus "dan ..." di akhir (multi-intent)
-            siteName = siteName.replace(/\s+dan\s+.*/i, '').trim();
-            
-            if (siteName) {
-                // Cek KNOWN_SITES
-                if (KNOWN_SITES[siteName.toLowerCase()]) {
-                    logger.logIntent(input, 'open_web', siteName.toLowerCase());
-                    return { tool: 'open_web', query: siteName.toLowerCase() };
-                }
-                // Cek URL
-                if (hasUrl) {
-                    logger.logIntent(input, 'open_web', hasUrl);
-                    return { tool: 'open_web', query: hasUrl };
-                }
-                logger.logIntent(input, 'open_web', siteName);
-                return { tool: 'open_web', query: siteName };
-            }
-        }
-        
-        // ==========================================
-        // PRIORITAS 4: SEARCH INTERNET
-        // ==========================================
-        // "cari ...", "search ...", "cari alamat web ...", "bisa kamu cari ..."
-        const searchKeywords = ['cari ', 'search ', 'googling ', 'carikan '];
-        const hasSearchIntent = searchKeywords.some(k => lowerCleaned.startsWith(k) || lowerCleaned.includes(` ${k}`)) ||
-                                lowerCleaned.includes('cari di internet') || lowerCleaned.includes('cari informasi') ||
-                                lowerCleaned.includes('cari di google') || lowerCleaned.includes('search web');
-        
-        if (hasSearchIntent) {
-            let query = cleaned;
-            for (const kw of searchKeywords) {
-                const idx = query.toLowerCase().indexOf(kw);
-                if (idx !== -1) {
-                    query = query.substring(idx + kw.length).trim();
-                    break;
-                }
-            }
-            query = query.replace(/\s+(di internet|di web|di google|di google search)/i, '').trim();
-            // Hapus "dan buka ..." di akhir
-            query = query.replace(/\s+dan\s+(buka|open).*/i, '').trim();
-            
-            // Don't search if query starts with question words
-            const questionWords = ['apa', 'bagaimana', 'mengapa', 'kenapa', 'siapa', 'kapan', 'dimana', 'apakah', 'maksud', 'definisi', 'pengertian'];
-            const isQuestion = questionWords.some(q => query.toLowerCase().startsWith(q));
-            
-            if (query && !isQuestion) {
-                logger.logIntent(input, 'search_web', query);
-                return { tool: 'search_web', query };
-            }
-        }
-        
-        // ==========================================
-        // PRIORITAS 5: SCRAPE / BACA HALAMAN
-        // ==========================================
-        if ((lower.includes('baca') || lower.includes('scrape') || lower.includes('ambil konten')) && hasUrl) {
-            logger.logIntent(input, 'scrape_web', hasUrl);
-            return { tool: 'scrape_web', query: hasUrl };
-        }
-        
-        // ==========================================
-        // PRIORITAS 6: YOUTUBE SEARCH
-        // ==========================================
-        if (lower.includes('cari youtube') || lower.includes('search youtube') || 
-            lower.includes('cari di youtube') || lower.includes('cari video')) {
-            let query = input.replace(/^(cari|search)\s+(di\s+)?(youtube|video)\s+/i, '')
-                            .replace(/\s+(di youtube|di yt)/i, '')
-                            .trim();
-            logger.logIntent(input, 'search_youtube', query);
-            return { tool: 'search_youtube', query: query || input };
-        }
-        
-        // ==========================================
-        // PRIORITAS 7: URL LANGSUNG
-        // ==========================================
+
+        // Fast-path: URL langsung
         if (hasUrl) {
             if (hasUrl.includes('youtube.com') || hasUrl.includes('youtu.be')) {
                 if (lower.includes('musik') || lower.includes('lagu') || lower.includes('music')) {
@@ -244,16 +84,78 @@ class JarvisAgent {
             logger.logIntent(input, 'open_web', hasUrl);
             return { tool: 'open_web', query: hasUrl };
         }
-        
-        // ==========================================
-        // DEFAULT: AI CHAT
-        // ==========================================
+
+        // Fast-path: "buka [situs]" untuk situs terkenal
+        const openKeywords = ['buka ', 'open ', 'browse ', 'masuk ke ', 'masuk ', 'kunjungi '];
+        const hasOpenIntent = openKeywords.some(k => lowerCleaned.startsWith(k) || lowerCleaned.includes(` ${k}`));
+        if (hasOpenIntent) {
+            let siteName = cleaned;
+            for (const kw of openKeywords) {
+                const idx = siteName.toLowerCase().indexOf(kw);
+                if (idx !== -1) {
+                    siteName = siteName.substring(idx + kw.length).trim();
+                    break;
+                }
+            }
+            siteName = siteName.replace(/\s+di\s+(browser|web)/i, '').trim();
+            if (siteName && KNOWN_SITES[siteName.toLowerCase()]) {
+                logger.logIntent(input, 'open_web', siteName.toLowerCase());
+                return { tool: 'open_web', query: siteName.toLowerCase() };
+            }
+        }
+
+        // Fast-path: "putar lagu/musik" → play_music
+        const musicKeywords = ['putar lagu', 'putar musik', 'mainkan lagu', 'mainkan musik', 
+                               'play music', 'play song', 'putarkan lagu', 'putarkan musik'];
+        const hasMusicIntent = musicKeywords.some(k => lowerCleaned.includes(k)) ||
+                               (lowerCleaned.includes('youtube music') && 
+                                (lowerCleaned.includes('putar') || lowerCleaned.includes('mainkan') || lowerCleaned.includes('play')));
+        if (hasMusicIntent && !lowerCleaned.includes('video')) {
+            let query = cleaned;
+            for (const kw of musicKeywords) {
+                const idx = query.toLowerCase().indexOf(kw);
+                if (idx !== -1) {
+                    query = query.substring(idx + kw.length).trim();
+                    break;
+                }
+            }
+            query = query.replace(/\s+di\s+(youtube\s+)?music/i, '').trim();
+            if (query) {
+                logger.logIntent(input, 'play_music', query);
+                return { tool: 'play_music', query };
+            }
+        }
+
+        // Fast-path: "putar video / tonton" → play_video
+        const videoKeywords = ['putar video', 'mainkan video', 'play video', 'tonton ', 'nonton '];
+        const hasVideoIntent = videoKeywords.some(k => lowerCleaned.includes(k)) ||
+                               (lowerCleaned.includes('youtube') && !lowerCleaned.includes('music') &&
+                                (lowerCleaned.includes('putar') || lowerCleaned.includes('mainkan') || 
+                                 lowerCleaned.includes('play') || lowerCleaned.includes('tonton') || 
+                                 lowerCleaned.includes('nonton')));
+        if (hasVideoIntent) {
+            let query = cleaned;
+            for (const kw of videoKeywords) {
+                const idx = query.toLowerCase().indexOf(kw);
+                if (idx !== -1) {
+                    query = query.substring(idx + kw.length).trim();
+                    break;
+                }
+            }
+            query = query.replace(/\s+di\s+youtube/i, '').trim();
+            if (query) {
+                logger.logIntent(input, 'play_video', query);
+                return { tool: 'play_video', query };
+            }
+        }
+
+        // Bukan fast-path → serahkan ke LLM
         logger.logIntent(input, 'chat', input);
         return { tool: 'chat', query: input };
     }
 
     /**
-     * Eksekusi tool berdasarkan intent detection
+     * Eksekusi tool berdasarkan nama tool
      */
     async executeTool(tool, query) {
         const startTime = Date.now();
@@ -265,7 +167,6 @@ class JarvisAgent {
             switch (tool) {
                 case 'open_web':
                     result = await open_web_tool(query);
-                    // Simpan URL yang berhasil dibuka
                     if (result && result.includes('✅ Membuka')) {
                         const urlMatch = result.match(/https?:\/\/[^\s]+/);
                         if (urlMatch) this.lastOpenedUrl = urlMatch[0];
@@ -294,6 +195,11 @@ class JarvisAgent {
                     result = await yt_search_tool(query);
                     break;
                     
+                case 'create_file':
+                    this.updateState(`Membuat file: "${query}"`);
+                    result = createFile(query);
+                    break;
+                    
                 case 'chat':
                 default:
                     return null;
@@ -310,89 +216,258 @@ class JarvisAgent {
     }
 
     /**
-     * Proses input tanpa streaming
+     * Parse output LLM: jika JSON tool call → eksekusi tool; jika chat → return teks.
+     * Mencegah JSON bocor ke UI.
+     */
+    async resolveAIOutput(aiOutput, startTime, onTokenCallback = null) {
+        const validation = parseAndValidateAIOutput(aiOutput);
+
+        if (validation.success) {
+            const { tool, query } = validation.data;
+            logger.debug('Agent', `AI output validated: tool=${tool}, query=${query.substring(0, 50)}`);
+            return await this.handleToolFromAI(tool, query, startTime, onTokenCallback);
+        }
+
+        // Fallback regex
+        const toolMatch = aiOutput.match(/\{"tool"\s*:\s*"([^"]+)"\s*,\s*"query"\s*:\s*"([^"]*)"\s*\}/);
+        if (toolMatch) {
+            const fallbackTool = toolMatch[1];
+            const fallbackQuery = toolMatch[2];
+            logger.debug('Agent', `Fallback regex extracted: tool=${fallbackTool}, query=${fallbackQuery.substring(0, 50)}`);
+            if (fallbackTool !== 'chat') {
+                return await this.handleToolFromAI(fallbackTool, fallbackQuery, startTime, onTokenCallback);
+            }
+        }
+
+        // Bukan tool call → tampilkan teks (strip sisa JSON jika ada)
+        const cleaned = this.stripJsonFromResponse(aiOutput);
+        if (onTokenCallback) onTokenCallback(cleaned);
+        this.history.push(`Jarvis: ${cleaned}`);
+        if (this.history.length > this.maxHistory) this.history.shift();
+        logger.jarvis(`${cleaned.substring(0, 200)} (${Date.now() - startTime}ms)`);
+        return cleaned;
+    }
+
+    /**
+     * Eksekusi tool dari output LLM, lalu rangkum jawaban natural.
+     */
+    async handleToolFromAI(tool, query, startTime, onTokenCallback = null) {
+        // Tool chat → langsung return query
+        if (tool === 'chat') {
+            if (onTokenCallback) onTokenCallback(query);
+            this.history.push(`Jarvis: ${query}`);
+            if (this.history.length > this.maxHistory) this.history.shift();
+            logger.jarvis(`${query.substring(0, 200)} (${Date.now() - startTime}ms)`);
+            return query;
+        }
+
+        const toolResult = await this.executeTool(tool, query);
+        if (!toolResult) {
+            const msg = `❌ Gagal menjalankan tool: ${tool}`;
+            if (onTokenCallback) onTokenCallback(msg);
+            return msg;
+        }
+
+        // open_web / play_music / play_video: hasil sudah human-readable
+        if (tool === 'open_web' || tool === 'play_music' || tool === 'play_video') {
+            if (onTokenCallback) onTokenCallback(toolResult);
+            this.history.push(`Jarvis: ${toolResult}`);
+            if (this.history.length > this.maxHistory) this.history.shift();
+            logger.jarvis(`${toolResult.substring(0, 200)} (${Date.now() - startTime}ms)`);
+            return toolResult;
+        }
+
+        // search_web / scrape_web / create_file: feed hasil tool ke LLM untuk jawaban natural
+        this.history.push(`[Tool Result: ${tool}]\n${toolResult}`);
+        const conversationHistory = this.history.join("\n");
+        const fullPrompt = `Kamu adalah JARVIS. Berdasarkan hasil eksekusi di atas, berikan jawaban akhir ke pengguna dalam format chat dalam Bahasa Indonesia. JANGAN output JSON.\n\n${conversationHistory}\n\nJawaban:`;
+
+        let finalAnswer = toolResult;
+        try {
+            if (onTokenCallback) {
+                const stream = await this.model.stream(fullPrompt);
+                finalAnswer = "";
+                for await (const chunk of stream) {
+                    const token = chunk.content || "";
+                    finalAnswer += token;
+                    onTokenCallback(token);
+                }
+                finalAnswer = finalAnswer.trim();
+            } else {
+                const response = await this.model.invoke(fullPrompt);
+                finalAnswer = (response.content || "").trim();
+            }
+            // Jika LLM masih mengeluarkan JSON tool call, pakai hasil tool
+            if (finalAnswer.startsWith('{') && finalAnswer.includes('"tool"')) {
+                finalAnswer = this.stripJsonFromResponse(finalAnswer);
+                if (!finalAnswer || finalAnswer.length < 10) {
+                    finalAnswer = toolResult;
+                }
+                if (onTokenCallback) onTokenCallback(finalAnswer);
+            }
+        } catch (e) {
+            finalAnswer = toolResult;
+            if (onTokenCallback) onTokenCallback(finalAnswer);
+        }
+
+        if (!finalAnswer || finalAnswer.length < 5) finalAnswer = toolResult;
+        finalAnswer = this.stripJsonFromResponse(finalAnswer);
+        this.history.push(`Jarvis: ${finalAnswer}`);
+        if (this.history.length > this.maxHistory) this.history.shift();
+        logger.jarvis(`${finalAnswer.substring(0, 200)} (${Date.now() - startTime}ms)`);
+        return finalAnswer;
+    }
+
+    /**
+     * Strip JSON tool calls from any response before displaying to user
+     */
+    stripJsonFromResponse(text) {
+        if (!text) return text;
+        let cleaned = text.replace(/\{"tool":\s*"[^"]+",\s*"query":\s*"([^"]*)"\s*\}/g, '$1');
+        cleaned = cleaned.replace(/\{["\s]*tool["\s]*:["\s]*"[^"]+"["\s]*,["\s]*query["\s]*:["\s]*"([^"]*)"["\s]*\}/g, '$1');
+        if (cleaned.startsWith('{') && cleaned.includes('"tool"')) {
+            const match = cleaned.match(/"query":\s*"([^"]+)"/);
+            if (match) cleaned = match[1];
+        }
+        return cleaned;
+    }
+
+    /**
+     * Agentic Loop (ReAct) — panggil LLM → tool → ulangi sampai 'chat' / maxLoops.
+     * Mempertahankan Structured Output (JSON Schema) lewat parseAndValidateAIOutput.
+     * Dilengkapi Loop Breaker: berhenti jika LLM mengulang aksi yang sama persis.
+     */
+    async _runAgenticLoop({ onTokenCallback = null, startTime = null } = {}) {
+        const t0 = startTime || Date.now();
+        const maxLoops = 5;
+        let isTaskComplete = false;
+        let loopCount = 0;
+        let previousAction = "";
+        let finalText = "";
+
+        while (!isTaskComplete && loopCount < maxLoops) {
+            loopCount++;
+            logger.debug('Agent.loop', `Iterasi #${loopCount}/${maxLoops}`);
+
+            // Bangun prompt lengkap (system + history)
+            const systemInstruction = _prompt.getDynamicPrompt(this.currentState);
+            const conversationHistory = this.history.join("\n");
+            const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
+
+            // 1. Panggil LLM (Structured Output: akan output JSON valid)
+            let aiOutput = "";
+            try {
+                const response = await this.model.invoke(fullPrompt);
+                aiOutput = (response.content || "").trim();
+            } catch (e) {
+                logger.logError('Agent.loop.callLLM', e);
+                const msg = "❌ Maaf, gagal memanggil model AI.";
+                if (onTokenCallback) onTokenCallback(msg);
+                return msg;
+            }
+
+            // 2. Parse output LLM (aman karena JSON Schema)
+            const validation = parseAndValidateAIOutput(aiOutput);
+            let tool, query;
+            if (validation.success) {
+                tool = validation.data.tool;
+                query = validation.data.query;
+            } else {
+                // Fallback: coba regex
+                const toolMatch = aiOutput.match(/\{"tool"\s*:\s*"([^"]+)"\s*,\s*"query"\s*:\s*"([^"]*)"\s*\}/);
+                if (toolMatch) {
+                    tool = toolMatch[1];
+                    query = toolMatch[2];
+                    logger.debug('Agent.loop', `Fallback regex: tool=${tool}`);
+                } else {
+                    // Bukan tool call → anggap jawaban natural (chat fallback)
+                    const cleaned = this.stripJsonFromResponse(aiOutput);
+                    finalText = cleaned;
+                    if (onTokenCallback) onTokenCallback(cleaned);
+                    this.history.push(`Jarvis: ${cleaned}`);
+                    if (this.history.length > this.maxHistory) this.history.shift();
+                    isTaskComplete = true;
+                    break;
+                }
+            }
+
+            const currentAction = `${tool}:${query}`;
+
+            // 3. Loop Breaker (Anti-Macet)
+            if (currentAction === previousAction) {
+                const msg = "⚠️ Jarvis mendeteksi perulangan instruksi. Menghentikan proses untuk mencegah crash.";
+                logger.warn('Agent.loop', `Loop terdeteksi: ${currentAction}`);
+                if (onTokenCallback) onTokenCallback(msg);
+                finalText = msg;
+                break;
+            }
+            previousAction = currentAction;
+
+            // 4. Eksekusi alat
+            if (tool === 'chat') {
+                // Jawaban final untuk pengguna
+                finalText = query;
+                if (onTokenCallback) onTokenCallback(query);
+                this.history.push(`Jarvis: ${query}`);
+                if (this.history.length > this.maxHistory) this.history.shift();
+                isTaskComplete = true;
+            } else {
+                // Eksekusi tool
+                const toolResult = await this.executeTool(tool, query);
+                // PENTING: Masukkan hasil alat ke history agar dibaca LLM di iterasi berikutnya
+                const resultLine = `[System Tool Result for ${tool}]: ${toolResult || "(no result)"}`;
+                this.history.push(resultLine);
+                if (this.history.length > this.maxHistory) this.history.shift();
+
+                // Untuk tool yang langsung user-facing (open_web, play_music, play_video),
+                // tampilkan hasilnya ke UI agar pengguna tahu progres, tapi JANGAN stop loop
+                // kecuali LLM sudah memutuskan 'chat'. Lanjutkan ke iterasi berikutnya.
+                if ((tool === 'open_web' || tool === 'play_music' || tool === 'play_video') && toolResult) {
+                    if (onTokenCallback) onTokenCallback(`${toolResult}\n`);
+                }
+
+                // Loop akan berlanjut sampai LLM mengembalikan 'chat' atau maxLoops tercapai
+            }
+        }
+
+        if (!isTaskComplete && loopCount >= maxLoops) {
+            const msg = "\n\n⏱️ Batas maksimum iterasi tercapai (5 langkah). Berikut ringkasan tindakan yang sudah dilakukan.";
+            if (onTokenCallback) onTokenCallback(msg);
+            finalText = (finalText || "") + msg;
+        }
+
+        logger.jarvis(`${(finalText || "").substring(0, 200)} (${Date.now() - t0}ms, ${loopCount} iter)`);
+        return finalText;
+    }
+
+    /**
+     * Proses input tanpa streaming — dipakai main.js (process-command)
+     * Agentic Loop: LLM ↔ tool, max 5 iterasi, anti-loop.
      */
     async processInput(userInput) {
         logger.user(userInput);
         const startTime = Date.now();
-        
+
         try {
+            // Fast-path: IntentDetector untuk perintah SANGAT jelas
             const intent = this.detectIntent(userInput);
-            const toolResult = await this.executeTool(intent.tool, intent.query);
-            
-            if (toolResult && intent.tool !== 'chat') {
-                this.history.push(`User: ${userInput}`);
-                if (this.history.length > this.maxHistory) this.history.shift();
-                // Inject tool result as context for the LLM
-                this.history.push(`[Tool Result: ${intent.tool}]\n${toolResult}`);
-                // Call LLM again to generate final answer from tool result
-                const conversationHistory = this.history.join("\n");
-                const systemInstruction = _prompt.getDynamicPrompt(this.currentState) + "\n\nBerikan jawaban natural dalam bahasa Indonesia berdasarkan hasil tool di atas. Jangan tampilkan JSON.";
-                const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
-                const response = await this.model.invoke(fullPrompt);
-                const finalAnswer = response.content.trim();
-                this.history.push(`Jarvis: ${finalAnswer}`);
-                if (this.history.length > this.maxHistory) this.history.shift();
-                logger.jarvis(`${finalAnswer.substring(0, 200)} (${Date.now() - startTime}ms)`);
-                return finalAnswer;
+            if (intent.tool !== 'chat') {
+                const toolResult = await this.executeTool(intent.tool, intent.query);
+                if (toolResult) {
+                    this.history.push(`User: ${userInput}`);
+                    if (this.history.length > this.maxHistory) this.history.shift();
+                    this.history.push(`Jarvis: ${toolResult}`);
+                    if (this.history.length > this.maxHistory) this.history.shift();
+                    logger.jarvis(`${toolResult.substring(0, 200)} (${Date.now() - startTime}ms)`);
+                    return toolResult;
+                }
             }
 
-            // Chat biasa → AI dengan JSON output
+            // Chat path → masuk Agentic Loop
             this.history.push(`User: ${userInput}`);
             if (this.history.length > this.maxHistory) this.history.shift();
 
-            const conversationHistory = this.history.join("\n");
-            const systemInstruction = _prompt.getDynamicPrompt(this.currentState);
-            const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
-
-            const response = await this.model.invoke(fullPrompt);
-            const aiOutput = response.content.trim();
-
-            // Validate JSON output
-            const validation = parseAndValidateAIOutput(aiOutput);
-            
-            if (validation.success) {
-                // Valid JSON - execute tool
-                const { tool, query } = validation.data;
-                logger.debug('Agent', `AI output validated: tool=${tool}, query=${query.substring(0, 50)}`);
-                
-                // For chat tool, return the query text directly (not JSON wrapper)
-                if (tool === 'chat') {
-                    this.history.push(`Jarvis: ${query}`);
-                    const duration = Date.now() - startTime;
-                    logger.jarvis(`${query.substring(0, 200)} (${duration}ms)`);
-                    return query;
-                }
-                
-                const toolResult = await this.executeTool(tool, query);
-                
-                if (toolResult) {
-                    // Feed tool result back to LLM for natural-language answer
-                    this.history.push(`[Tool Result: ${tool}]\n${toolResult}`);
-                    const conversationHistory2 = this.history.join("\n");
-                    const systemInstruction2 = _prompt.getDynamicPrompt(this.currentState) + "\n\nBerikan jawaban natural dalam bahasa Indonesia berdasarkan hasil tool di atas. Jangan tampilkan JSON.";
-                    const fullPrompt2 = `${systemInstruction2}\n\nRiwayat Percakapan:\n${conversationHistory2}\n\nJarvis:`;
-                    const response2 = await this.model.invoke(fullPrompt2);
-                    const finalAnswer2 = response2.content.trim();
-                    this.history.push(`Jarvis: ${finalAnswer2}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                    logger.jarvis(`${finalAnswer2.substring(0, 200)} (${Date.now() - startTime}ms)`);
-                    return finalAnswer2;
-                }
-                
-                // If tool returned null, fallback to AI response
-                this.history.push(`Jarvis: ${aiOutput}`);
-                const duration = Date.now() - startTime;
-                logger.jarvis(`${aiOutput.substring(0, 200)} (${duration}ms)`);
-                return aiOutput;
-            } else {
-                // Invalid JSON - fallback to chat
-                logger.warn('Agent', `Invalid JSON output from AI: ${validation.error}`);
-                this.history.push(`Jarvis: ${aiOutput}`);
-                const duration = Date.now() - startTime;
-                logger.jarvis(`${aiOutput.substring(0, 200)} (${duration}ms)`);
-                return aiOutput;
-            }
+            return await this._runAgenticLoop({ onTokenCallback: null, startTime });
         } catch (error) {
             logger.logError('Agent.processInput', error);
             return "❌ Maaf, terjadi kesalahan. Silakan coba lagi.";
@@ -400,66 +475,40 @@ class JarvisAgent {
     }
 
     /**
-     * Proses input dengan streaming
+     * Proses input dengan streaming — UI memakai path ini (process-command-stream)
+     * Agentic Loop + streaming ke UI per token.
      */
     async processInputStream(userInput, onTokenCallback) {
         logger.user(userInput);
         const startTime = Date.now();
-        
+
         try {
+            // Fast-path: IntentDetector untuk perintah SANGAT jelas
             const intent = this.detectIntent(userInput);
-            const toolResult = await this.executeTool(intent.tool, intent.query);
-            
-            if (toolResult && intent.tool !== 'chat') {
-                this.history.push(`User: ${userInput}`);
-                if (this.history.length > this.maxHistory) this.history.shift();
-                // Inject tool result as context for the LLM
-                this.history.push(`[Tool Result: ${intent.tool}]\n${toolResult}`);
-                // Call LLM again to generate final answer from tool result
-                const conversationHistory = this.history.join("\n");
-                const systemInstruction = _prompt.getDynamicPrompt(this.currentState) + "\n\nBerikan jawaban natural dalam bahasa Indonesia berdasarkan hasil tool di atas. Jangan tampilkan JSON.";
-                const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
-                const stream = await this.model.stream(fullPrompt);
-                let fullAnswer = "";
-                for await (const chunk of stream) {
-                    const token = chunk.content;
-                    fullAnswer += token;
-                    if (onTokenCallback) onTokenCallback(token);
+            if (intent.tool !== 'chat') {
+                const toolResult = await this.executeTool(intent.tool, intent.query);
+                if (toolResult) {
+                    this.history.push(`User: ${userInput}`);
+                    if (this.history.length > this.maxHistory) this.history.shift();
+                    this.history.push(`Jarvis: ${toolResult}`);
+                    if (this.history.length > this.maxHistory) this.history.shift();
+                    if (onTokenCallback) onTokenCallback(toolResult);
+                    logger.jarvis(`${toolResult.substring(0, 200)} (${Date.now() - startTime}ms)`);
+                    return toolResult;
                 }
-                this.history.push(`Jarvis: ${fullAnswer.trim()}`);
-                if (this.history.length > this.maxHistory) this.history.shift();
-                logger.jarvis(`${fullAnswer.trim().substring(0, 200)} (${Date.now() - startTime}ms)`);
-                return fullAnswer.trim();
             }
 
-            // Chat biasa → AI streaming
+            // Chat path → masuk Agentic Loop (dengan streaming)
             this.history.push(`User: ${userInput}`);
             if (this.history.length > this.maxHistory) this.history.shift();
 
-            const conversationHistory = this.history.join("\n");
-            const systemInstruction = _prompt.getDynamicPrompt(this.currentState);
-            const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
-
-            const stream = await this.model.stream(fullPrompt);
-            let fullAnswer = "";
-
-            for await (const chunk of stream) {
-                const token = chunk.content;
-                fullAnswer += token;
-                if (onTokenCallback) onTokenCallback(token); 
-            }
-
-            this.history.push(`Jarvis: ${fullAnswer.trim()}`);
-            const duration = Date.now() - startTime;
-            logger.jarvis(`${fullAnswer.trim().substring(0, 200)} (${duration}ms)`);
-            
-            return fullAnswer.trim();
+            return await this._runAgenticLoop({ onTokenCallback, startTime });
         } catch (error) {
             logger.logError('Agent.processInputStream', error);
             if (onTokenCallback) onTokenCallback("❌ Maaf, terjadi kesalahan.");
             return "❌ Maaf, terjadi kesalahan.";
         }
-    }   
+    }
 }
 
 module.exports = new JarvisAgent();

@@ -145,28 +145,71 @@ document.addEventListener('DOMContentLoaded', () => {
         return messageDiv;
     }
 
-    // ============ FORMAT MESSAGE (Rich Text) ============
+    // ============ HTML ESCAPE (Cegah XSS) ============
+    function escapeHTML(text) {
+        var charMap = {
+            '&': '&',
+            '<': '<',
+            '>': '>',
+            '"': '"',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, function(m) { return charMap[m]; });
+    }
+
+    // ============ FORMAT MESSAGE (Rich Text, AMAN dari XSS) ============
+    // PENTING: Urutan parsing harus benar untuk mencegah Greedy Regex
+    // 1. Escape HTML (cegah XSS)
+    // 2. Parse Markdown link [teks](url) SEBELUM raw URL agar tanda kurung
+    //    sintaks markdown tidak ikut terbawa ke dalam URL.
+    // 3. Parse raw URL dengan regex terbatas sehingga karakter penutup
+    //    seperti ) ] , . " ' tidak ikut terambil.
+    // 4. Inline code & bold (Markdown sederhana)
+    // 5. Baris baru
     function formatMessage(text) {
         if (!text) return '';
-        
-        // Escape HTML first
-        let formatted = text.replace(/&/g, '&')
-                            .replace(/</g, '<')
-                            .replace(/>/g, '>');
-        
-        // Convert URLs to clickable links
-        formatted = formatted.replace(
-            /(https?:\/\/[^\s]+)/g, 
-            '<a href="#" onclick="event.preventDefault(); if(window.jarvis) window.jarvis.openWeb(\'$1\'); return false;" style="color: #00d4ff; text-decoration: underline;">$1</a>'
+
+        // 1. Escape HTML dasar (cegah XSS) — escape dulu sebelum transform lain
+        let html = escapeHTML(text);
+
+        // 2. PARSE MARKDOWN LINKS: [teks](url) -> <a href="url">teks</a>
+        //    Pola [teks](url) diproses lebih dulu agar tanda ')' dari sintaks
+        //    markdown tidak ikut tertangkap oleh parser raw URL di langkah 3.
+        //    URL pada pola ini sudah di-escape, namun karakter '<' '>' ' sudah
+        //    aman; kita filter karakter penutup pada sisi URL juga.
+        html = html.replace(
+            /\[([^\]]+)\]\((https?:\/\/[^\s<>()\[\]"']+)\)/g,
+            '<a href="$2" target="_blank" rel="noopener noreferrer" style="color: #4da6ff; text-decoration: none;">$1</a>'
         );
-        
-        // Convert **bold** to <strong>
-        formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong style="color: #00d4ff;">$1</strong>');
-        
-        // Convert newlines to <br>
-        formatted = formatted.replace(/\n/g, '<br>');
-        
-        return formatted;
+
+        // 3. PARSE RAW URLS: http(s)://... -> <a href="...">...</a>
+        //    Hindari menangkap link yang sudah dibuat di langkah 2 dengan
+        //    lookbehind: jangan mulai匹配 di dalam atribut href="..." atau href='...'
+        //    dan batasi karakter belakang agar ')', ']', ',', '.', '"', "'"
+        //    tidak ikut terambil (fix bug 404 karena greedy regex).
+        html = html.replace(
+            /(?<!href="|href='|">)(?<!">)\b(https?:\/\/[^\s<>()\[\]"',]+)(?=[^<]*?(?:<|$))/gi,
+            (match, url) => {
+                // Buang karakter penutup yang mungkin masih nyangkut di ekor URL
+                // (mis. titik di akhir kalimat, koma, atau tanda kurung tutup)
+                const cleanedUrl = url.replace(/[)\].,"']+$/g, '');
+                // Jika setelah dibersihkan URL kosong, jangan buat link
+                if (!cleanedUrl || !/^https?:\/\//i.test(cleanedUrl)) return match;
+                return `<a href="${cleanedUrl}" target="_blank" rel="noopener noreferrer" style="color: #4da6ff; text-decoration: underline;">${cleanedUrl}</a>`;
+            }
+        );
+
+        // 4. Inline code: `code` → <code>...</code> (setelah link, agar tidak
+        //    terganggu parsing URL)
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+        // 5. Convert **bold** to <strong>
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="color: #00d4ff;">$1</strong>');
+
+        // 6. Convert newlines to <br>
+        html = html.replace(/\n/g, '<br>');
+
+        return html;
     }
 
     // ============ UPDATE LAST AI MESSAGE (STREAMING) ============
