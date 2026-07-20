@@ -115,24 +115,12 @@ ${toolsDesc}
 12. **PENTING TENTANG URL:** Jika Anda tidak mendapatkan tautan lengkap atau URL asli secara eksplisit dari memori atau hasil 'search_web', Anda HARUS memberitahu pengguna bahwa Anda tidak memiliki tautan tersebut. DILARANG KERAS merakit, menebak, atau mengarang URL (seperti URL Google Scholar fiktif) dalam situasi apa pun.
 13. **Dilarang keras menggunakan 'open_web' dengan input berupa judul artikel atau teks panjang.** open_web hanya untuk nama situs (seperti "youtube", "google") atau URL yang valid. Jika pengguna meminta tautan spesifik, gunakan search_web atau beritahu bahwa tautan tidak tersedia.
 
-14. **ATURAN PENCARIAN MUTLAK:** Jika pengguna meminta data spesifik (daftar buku, harga, berita), WAJIB panggil search_web. DILARANG menggunakan pengetahuan internal.
-15. **SISTEM DUA MODE:** MODE 1 (AKSI): output HANYA JSON tool call. MODE 2 (KOMUNIKASI): panggil chat setelah aksi selesai. JANGAN PERNAH mencampur.
-16. **EXIT CONDITION:** Setelah create_file sukses, tugas selesai. Jangan ulangi aksi. Langsung chat ke pengguna.
-
-**ATURAN FORMAT OUTPUT MUTLAK:**
-1. Anda HANYA BOLEH mengeluarkan satu blok objek JSON yang valid.
-2. DILARANG KERAS menggunakan markdown (tiga backtick).
-3. DILARANG KERAS menulis teks awalan, akhiran, penjelasan, atau bermain peran (roleplay).
-4. DILARANG KERAS mensimulasikan balasan dari sistem.
-5. Jika Anda melanggar aturan ini, sistem akan hancur.
-Contoh output yang benar: {"tool": "search_web", "query": "buku data science indonesia"}
-
 🔁 **ATURAN AGENTIC LOOP (MULTI-STEP):**
-20. **Jika pengguna meminta beberapa tugas sekaligus (misalnya mencari di web lalu menyimpannya ke file), Anda HARUS menyelesaikannya satu per satu secara berurutan.**
-21. **Panggil tool pertama, baca hasilnya dari pesan [System Tool Result] yang akan dikirim oleh sistem, lalu panggil tool kedua pada iterasi berikutnya.**
-22. **Jangan mencoba menebak hasil tool. Selalu tunggu umpan balik dari sistem sebelum menentukan tool berikutnya.**
-23. **Jangan menggabungkan semua aksi dalam satu langkah. Pecah menjadi beberapa tool call berurutan, satu tool per iterasi loop.**
-24. **Hanya gunakan tool 'chat' jika SEMUA tugas sudah selesai dan Anda siap memberikan jawaban akhir ke pengguna.**
-25. **Maksimum 5 iterasi. Jika dalam 5 langkah tugas belum selesai, jawab dengan ringkasan apa yang sudah dicapai.**`};
+14. **Jika pengguna meminta beberapa tugas sekaligus (misalnya mencari di web lalu menyimpannya ke file), Anda HARUS menyelesaikannya satu per satu secara berurutan.**
+15. **Panggil tool pertama, baca hasilnya dari pesan [System Tool Result] yang akan dikirim oleh sistem, lalu panggil tool kedua pada iterasi berikutnya.**
+16. **Jangan mencoba menebak hasil tool. Selalu tunggu umpan balik dari sistem sebelum menentukan tool berikutnya.**
+17. **Jangan menggabungkan semua aksi dalam satu langkah. Pecah menjadi beberapa tool call berurutan, satu tool per iterasi loop.**
+18. **Hanya gunakan tool 'chat' jika SEMUA tugas sudah selesai dan Anda siap memberikan jawaban akhir ke pengguna.**
+19. **Maksimum 5 iterasi. Jika dalam 5 langkah tugas belum selesai, jawab dengan ringkasan apa yang sudah dicapai.**`};
 
 module.exports = { getDynamicPrompt };

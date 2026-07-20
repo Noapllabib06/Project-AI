@@ -1,7 +1,7 @@
 /**
  * src/engine/agent.js
  * Mesin utama dengan alur Single-Pass yang stabil.
- * LLM (Llama 3.1) memutuskan alat yang digunakan melalui output JSON.
+ * LLM (Qwen 2.5) memutuskan alat yang digunakan melalui output JSON.
  * IntentDetector hanya sebagai fast-path untuk perintah sederhana.
  * V5 - Single-Pass, stabil, tanpa loop
  */
@@ -19,7 +19,7 @@ const { createFile } = require("../tools/file_tools");
 class JarvisAgent {
     constructor() {
         this.model = new ChatOllama({
-            model: "llama3.1:latest",
+            model: "qwen2.5:7b",
             temperature: 0,
         });
         
@@ -32,16 +32,8 @@ class JarvisAgent {
         
         // URL terakhir yang dibuka (untuk "buka lagi")
         this.lastOpenedUrl = null;
-
-        // Memori hasil tool terakhir untuk injeksi konteks eksplisit
-        this.lastToolOutput = null;
-        this.lastTool = null;
-        this.lastQuery = null;
-
-        // File Lock System: Set untuk melacak file yang sudah dibuat dalam sesi
-        this.createdFilesInSession = new Set();
         
-        logger.info('JarvisAgent', 'Agent initialized with Ollama model: llama3.1:latest');
+        logger.info('JarvisAgent', 'Agent initialized with Ollama model: qwen2.5:7b');
     }
 
     updateState(newState) {
@@ -205,12 +197,6 @@ class JarvisAgent {
                     
                 case 'create_file':
                     this.updateState(`Membuat file: "${query}"`);
-                    // Validasi keamanan: nama file maksimal 50 karakter
-                    const fnPart = query.split('|')[0].trim();
-                    if (fnPart.length > 50) {
-                        result = `❌ Gagal: Nama file "${fnPart}" terlalu panjang (${fnPart.length} karakter). Maksimal 50 karakter. Persingkat nama file.`;
-                        break;
-                    }
                     result = createFile(query);
                     break;
                     
@@ -366,12 +352,7 @@ class JarvisAgent {
             // Bangun prompt lengkap (system + history)
             const systemInstruction = _prompt.getDynamicPrompt(this.currentState);
             const conversationHistory = this.history.join("\n");
-            let fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
-
-            // Inject hasil tool terakhir ke prompt untuk mencegah loop pencarian
-            if (this.lastToolOutput) {
-                fullPrompt += `\n\n[Konteks Tool Terakhir]: ${JSON.stringify(this.lastToolOutput).slice(0, 300)}\nPENTING: Jangan ulangi pencarian web. Kamu sudah mendapatkan data. Sekarang, gunakan tool 'create_file'.`;
-            }
+            const fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
 
             // 1. Panggil LLM (Structured Output: akan output JSON valid)
             let aiOutput = "";
@@ -412,31 +393,14 @@ class JarvisAgent {
 
             const currentAction = `${tool}:${query}`;
 
-            // 3a. File Lock System: cegah create_file pada file yang sudah pernah dibuat
-            if (tool === 'create_file') {
-                const filename = query.split('|')[0].trim();
-                if (this.createdFilesInSession.has(filename)) {
-                    const blockMsg = `[SISTEM BLOKIR]: Anda sudah membuat file ${filename} dengan sukses. DILARANG KERAS mengedit atau membuat ulang file ini. SEKARANG gunakan tool 'chat' untuk menyelesaikan tugas.`;
-                    this.history.push(`[Sistem Blokir]: ${blockMsg}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                    logger.warn('Agent.loop', `Mencegah AI menimpa file ${filename} berulang kali.`);
-                    // Tambahkan ke lastToolOutput agar terbaca di iterasi berikutnya
-                    this.lastToolOutput = blockMsg;
-                    continue; // lompat ke iterasi LLM berikutnya
-                }
-            }
-
-            // 3b. Redundancy Guard
-            const isRepeatSearch = tool === 'search_web' && this.lastTool === 'search_web' && this.lastToolOutput;
-            const exactRepeat = currentAction === previousAction;
-            if (exactRepeat) {
-                const msg = "⚠️ Jarvis mendeteksi perulangan instruksi. Menghentikan proses.";
-                logger.warn('Agent.loop', `Exact repeat: ${currentAction}`);
+            // 3. Loop Breaker (Anti-Macet)
+            if (currentAction === previousAction) {
+                const msg = "⚠️ Jarvis mendeteksi perulangan instruksi. Menghentikan proses untuk mencegah crash.";
+                logger.warn('Agent.loop', `Loop terdeteksi: ${currentAction}`);
                 if (onTokenCallback) onTokenCallback(msg);
                 finalText = msg;
                 break;
             }
-
             previousAction = currentAction;
 
             // 4. Eksekusi alat
@@ -454,21 +418,6 @@ class JarvisAgent {
                 const resultLine = `[System Tool Result for ${tool}]: ${toolResult || "(no result)"}`;
                 this.history.push(resultLine);
                 if (this.history.length > this.maxHistory) this.history.shift();
-
-                // Inject: simpan metadata tool untuk anti-loop dan context injection
-                this.lastToolOutput = toolResult;
-                this.lastTool = tool;
-                this.lastQuery = query;
-
-                // EXIT CONDITION: jika create_file sukses, inject instruksi keras untuk berhenti + kunci nama file
-                if (tool === 'create_file' && toolResult && !toolResult.includes('❌')) {
-                    const filename = query.split('|')[0].trim();
-                    this.createdFilesInSession.add(filename); // kunci file
-                    const exitMsg = "PENTING: File telah SUKSES dibuat dan disimpan. TUGAS AKSI SELESAI. Anda DILARANG memanggil tool 'create_file' atau tool aksi lainnya lagi. Langkah Anda selanjutnya WAJIB memanggil tool 'chat' untuk mengabarkan kepada pengguna bahwa file sudah siap.";
-                    this.lastToolOutput = exitMsg;
-                    this.history.push(`[System Exit Instruction]: ${exitMsg}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                }
 
                 // Untuk tool yang langsung user-facing (open_web, play_music, play_video),
                 // tampilkan hasilnya ke UI agar pengguna tahu progres, tapi JANGAN stop loop
@@ -496,9 +445,6 @@ class JarvisAgent {
      * Agentic Loop: LLM ↔ tool, max 5 iterasi, anti-loop.
      */
     async processInput(userInput) {
-        // Reset File Lock System per sesi chat baru
-        this.createdFilesInSession = new Set();
-        
         logger.user(userInput);
         const startTime = Date.now();
 
@@ -533,9 +479,6 @@ class JarvisAgent {
      * Agentic Loop + streaming ke UI per token.
      */
     async processInputStream(userInput, onTokenCallback) {
-        // Reset File Lock System per sesi chat baru
-        this.createdFilesInSession = new Set();
-        
         logger.user(userInput);
         const startTime = Date.now();
 
