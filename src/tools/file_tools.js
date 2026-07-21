@@ -71,4 +71,45 @@ function createFile(query) {
     }
 }
 
-module.exports = { createFile };
+/**
+ * Baca isi file teks dari path yang diberikan
+ * @param {string} query - Path absolut atau relatif ke file
+ * @returns {Promise<{ success: boolean, data: string }>}
+ */
+async function readFileTool(query) {
+    logger.tool('readFileTool', `Reading: "${query.substring(0, 100)}"`);
+    try {
+        // Ekstrak path dari query (bersihkan dari pipe atau embel-embel)
+        const filePath = query.split('|')[0].trim();
+        const absolutePath = path.resolve(filePath);
+
+        // Cek eksistensi file
+        if (!fs.existsSync(absolutePath)) {
+            return {
+                success: false,
+                data: `[SYSTEM ERROR] File tidak ditemukan di lokasi: ${absolutePath}. Jangan gunakan tool read_file jika file belum ada.`
+            };
+        }
+
+        // Baca isi file
+        const content = fs.readFileSync(absolutePath, 'utf8');
+
+        // Batasi output agar tidak menghabiskan memory LLM (maksimal 3000 karakter)
+        const MAX_CHARS = 3000;
+        if (content.length > MAX_CHARS) {
+            return {
+                success: true,
+                data: content.substring(0, MAX_CHARS) + "\n\n... [SISTEM MEMOTONG TEKS: File terlalu panjang]"
+            };
+        }
+
+        return { success: true, data: content };
+    } catch (error) {
+        return {
+            success: false,
+            data: `[SYSTEM ERROR] Gagal membaca file: ${error.message}`
+        };
+    }
+}
+
+module.exports = { createFile, readFileTool };

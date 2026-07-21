@@ -1,7 +1,7 @@
 /**
  * src/engine/agent.js
  * Mesin utama dengan alur Single-Pass yang stabil.
- * LLM (Llama 3.1) memutuskan alat yang digunakan melalui output JSON.
+ * LLM (Qwen 2.5) memutuskan alat yang digunakan melalui output JSON.
  * IntentDetector hanya sebagai fast-path untuk perintah sederhana.
  * V5 - Single-Pass, stabil, tanpa loop
  */
@@ -14,13 +14,16 @@ const { parseAndValidateAIOutput, generateFeedbackMessage } = require("./json_va
 const { executeWithFeedbackLoop } = require("./feedback_loop");
 const { open_web_tool, scrape_web_tool, search_web_tool, extractUrl, KNOWN_SITES } = require("../tools/web_tools");
 const { yt_search_tool, play_youtube_music, play_youtube_video, getVideoInfo } = require("../tools/yt_tools");
-const { createFile } = require("../tools/file_tools");
+const { createFile, readFileTool } = require("../tools/file_tools");
 
 class JarvisAgent {
     constructor() {
         this.model = new ChatOllama({
-            model: "llama3.1:latest",
-            temperature: 0,
+            model: "qwen3.5:9b", // Bisa Diganti kemodel Lain
+            // Gunakan "Ollama list" untuk melihat model lokal yang tersedia
+            // Masukan Nama Model Yang tersedia ke bagian model diatas, misal: "qwen2.5:7b" atau "gemma4:12b"
+            temperature: 0.1,
+            num_ctx: 65536,
         });
         
         // Memori jangka pendek (Array lokal)
@@ -41,7 +44,7 @@ class JarvisAgent {
         // File Lock System: Set untuk melacak file yang sudah dibuat dalam sesi
         this.createdFilesInSession = new Set();
         
-        logger.info('JarvisAgent', 'Agent initialized with Ollama model: llama3.1:latest');
+        logger.info('JarvisAgent', 'Agent initialized with Ollama model: qwen3.5:9b');
     }
 
     updateState(newState) {
@@ -213,6 +216,12 @@ class JarvisAgent {
                     }
                     result = createFile(query);
                     break;
+
+                case 'read_file':
+                    this.updateState(`Membaca file: "${query}"`);
+                    const readResult = await readFileTool(query);
+                    result = readResult.data;
+                    break;
                     
                 case 'chat':
                 default:
@@ -347,224 +356,109 @@ class JarvisAgent {
     }
 
     /**
-     * Agentic Loop (ReAct) — panggil LLM → tool → ulangi sampai 'chat' / maxLoops.
-     * Mempertahankan Structured Output (JSON Schema) lewat parseAndValidateAIOutput.
-     * Dilengkapi Loop Breaker: berhenti jika LLM mengulang aksi yang sama persis.
+     * Pipeline Linier 1-Arah (Flow Engineering)
+     * 1) LLM dipanggil 1x untuk menghasilkan JSON tool call
+     * 2) Tool dieksekusi
+     * 3) Hasil langsung dikembalikan — tanpa rekursi/loop
      */
-    async _runAgenticLoop({ onTokenCallback = null, startTime = null } = {}) {
+    async _executePipeline(userInput, { onTokenCallback = null, startTime = null } = {}) {
         const t0 = startTime || Date.now();
-        const maxLoops = 5;
-        let isTaskComplete = false;
-        let loopCount = 0;
-        let previousAction = "";
         let finalText = "";
 
-        while (!isTaskComplete && loopCount < maxLoops) {
-            loopCount++;
-            logger.debug('Agent.loop', `Iterasi #${loopCount}/${maxLoops}`);
-
-            // Bangun prompt lengkap (system + history)
+        try {
+            // TAHAP 1: Panggil LLM 1x untuk menghasilkan JSON tool call
             const systemInstruction = _prompt.getDynamicPrompt(this.currentState);
-            const conversationHistory = this.history.join("\n");
-            let fullPrompt = `${systemInstruction}\n\nRiwayat Percakapan:\n${conversationHistory}\n\nJarvis:`;
-
-            // Inject hasil tool terakhir ke prompt untuk mencegah loop pencarian
-            if (this.lastToolOutput) {
-                fullPrompt += `\n\n[Konteks Tool Terakhir]: ${JSON.stringify(this.lastToolOutput).slice(0, 300)}\nPENTING: Jangan ulangi pencarian web. Kamu sudah mendapatkan data. Sekarang, gunakan tool 'create_file'.`;
-            }
-
-            // 1. Panggil LLM (Structured Output: akan output JSON valid)
+            const fullPrompt = `${systemInstruction}\n\nPertanyaan: ${userInput}\n\nJawab dengan JSON saja:`;
+            
             let aiOutput = "";
             try {
-                const response = await this.model.invoke(fullPrompt);
-                aiOutput = (response.content || "").trim();
+                if (onTokenCallback) {
+                    onTokenCallback("Memproses niat Anda...\n");
+                    const stream = await this.model.stream(fullPrompt);
+                    for await (const chunk of stream) {
+                        aiOutput += (chunk.content || "");
+                    }
+                } else {
+                    const response = await this.model.invoke(fullPrompt);
+                    aiOutput = (response.content || "").trim();
+                }
             } catch (e) {
-                logger.logError('Agent.loop.callLLM', e);
+                logger.logError('Agent.pipeline.callLLM', e);
                 const msg = "❌ Maaf, gagal memanggil model AI.";
                 if (onTokenCallback) onTokenCallback(msg);
                 return msg;
             }
 
-            // 2. Parse output LLM (aman karena JSON Schema)
+            // Parse output LLM
             const validation = parseAndValidateAIOutput(aiOutput);
             let tool, query;
             if (validation.success) {
                 tool = validation.data.tool;
                 query = validation.data.query;
             } else {
-                // Fallback: coba regex
                 const toolMatch = aiOutput.match(/\{"tool"\s*:\s*"([^"]+)"\s*,\s*"query"\s*:\s*"([^"]*)"\s*\}/);
                 if (toolMatch) {
                     tool = toolMatch[1];
                     query = toolMatch[2];
-                    logger.debug('Agent.loop', `Fallback regex: tool=${tool}`);
                 } else {
-                    // Bukan tool call → anggap jawaban natural (chat fallback)
                     const cleaned = this.stripJsonFromResponse(aiOutput);
-                    finalText = cleaned;
                     if (onTokenCallback) onTokenCallback(cleaned);
-                    this.history.push(`Jarvis: ${cleaned}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                    isTaskComplete = true;
-                    break;
+                    logger.jarvis(`${cleaned.substring(0, 200)} (${Date.now() - t0}ms)`);
+                    return cleaned;
                 }
             }
 
-            const currentAction = `${tool}:${query}`;
-
-            // 3a. File Lock System: cegah create_file pada file yang sudah pernah dibuat
-            if (tool === 'create_file') {
-                const filename = query.split('|')[0].trim();
-                if (this.createdFilesInSession.has(filename)) {
-                    const blockMsg = `[SISTEM BLOKIR]: Anda sudah membuat file ${filename} dengan sukses. DILARANG KERAS mengedit atau membuat ulang file ini. SEKARANG gunakan tool 'chat' untuk menyelesaikan tugas.`;
-                    this.history.push(`[Sistem Blokir]: ${blockMsg}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                    logger.warn('Agent.loop', `Mencegah AI menimpa file ${filename} berulang kali.`);
-                    // Tambahkan ke lastToolOutput agar terbaca di iterasi berikutnya
-                    this.lastToolOutput = blockMsg;
-                    continue; // lompat ke iterasi LLM berikutnya
-                }
-            }
-
-            // 3b. Redundancy Guard
-            const isRepeatSearch = tool === 'search_web' && this.lastTool === 'search_web' && this.lastToolOutput;
-            const exactRepeat = currentAction === previousAction;
-            if (exactRepeat) {
-                const msg = "⚠️ Jarvis mendeteksi perulangan instruksi. Menghentikan proses.";
-                logger.warn('Agent.loop', `Exact repeat: ${currentAction}`);
-                if (onTokenCallback) onTokenCallback(msg);
-                finalText = msg;
-                break;
-            }
-
-            previousAction = currentAction;
-
-            // 4. Eksekusi alat
+            // TAHAP 2: Routing - jika chat, langsung return
             if (tool === 'chat') {
-                // Jawaban final untuk pengguna
-                finalText = query;
                 if (onTokenCallback) onTokenCallback(query);
-                this.history.push(`Jarvis: ${query}`);
-                if (this.history.length > this.maxHistory) this.history.shift();
-                isTaskComplete = true;
-            } else {
-                // Eksekusi tool
-                const toolResult = await this.executeTool(tool, query);
-                // PENTING: Masukkan hasil alat ke history agar dibaca LLM di iterasi berikutnya
-                const resultLine = `[System Tool Result for ${tool}]: ${toolResult || "(no result)"}`;
-                this.history.push(resultLine);
-                if (this.history.length > this.maxHistory) this.history.shift();
-
-                // Inject: simpan metadata tool untuk anti-loop dan context injection
-                this.lastToolOutput = toolResult;
-                this.lastTool = tool;
-                this.lastQuery = query;
-
-                // EXIT CONDITION: jika create_file sukses, inject instruksi keras untuk berhenti + kunci nama file
-                if (tool === 'create_file' && toolResult && !toolResult.includes('❌')) {
-                    const filename = query.split('|')[0].trim();
-                    this.createdFilesInSession.add(filename); // kunci file
-                    const exitMsg = "PENTING: File telah SUKSES dibuat dan disimpan. TUGAS AKSI SELESAI. Anda DILARANG memanggil tool 'create_file' atau tool aksi lainnya lagi. Langkah Anda selanjutnya WAJIB memanggil tool 'chat' untuk mengabarkan kepada pengguna bahwa file sudah siap.";
-                    this.lastToolOutput = exitMsg;
-                    this.history.push(`[System Exit Instruction]: ${exitMsg}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                }
-
-                // Untuk tool yang langsung user-facing (open_web, play_music, play_video),
-                // tampilkan hasilnya ke UI agar pengguna tahu progres, tapi JANGAN stop loop
-                // kecuali LLM sudah memutuskan 'chat'. Lanjutkan ke iterasi berikutnya.
-                if ((tool === 'open_web' || tool === 'play_music' || tool === 'play_video') && toolResult) {
-                    if (onTokenCallback) onTokenCallback(`${toolResult}\n`);
-                }
-
-                // Loop akan berlanjut sampai LLM mengembalikan 'chat' atau maxLoops tercapai
+                logger.jarvis(`${query.substring(0, 200)} (${Date.now() - t0}ms)`);
+                return query;
             }
-        }
 
-        if (!isTaskComplete && loopCount >= maxLoops) {
-            const msg = "\n\n⏱️ Batas maksimum iterasi tercapai (5 langkah). Berikut ringkasan tindakan yang sudah dilakukan.";
+            // TAHAP 3: Eksekusi tool (1x)
+            if (onTokenCallback) onTokenCallback(`Menjalankan alat: ${tool}...\n`);
+            const toolResult = await this.executeTool(tool, query);
+
+            if (!toolResult) {
+                finalText = `❌ Gagal menjalankan tool: ${tool}`;
+                if (onTokenCallback) onTokenCallback(finalText);
+                return finalText;
+            }
+
+            // TAHAP 4: Kembalikan hasil sebagai jawaban final
+            finalText = toolResult;
+            if (onTokenCallback) onTokenCallback(finalText);
+            logger.jarvis(`${finalText.substring(0, 200)} (${Date.now() - t0}ms)`);
+            return finalText;
+
+        } catch (error) {
+            logger.logError('Agent.pipeline', error);
+            const msg = `⚠️ System Exception: ${error.message}`;
             if (onTokenCallback) onTokenCallback(msg);
-            finalText = (finalText || "") + msg;
+            return msg;
+        } finally {
+            // Bersihkan memori agar context window tidak bengkak
+            this.history = [];
+            this.createdFilesInSession.clear();
         }
-
-        logger.jarvis(`${(finalText || "").substring(0, 200)} (${Date.now() - t0}ms, ${loopCount} iter)`);
-        return finalText;
     }
 
     /**
      * Proses input tanpa streaming — dipakai main.js (process-command)
-     * Agentic Loop: LLM ↔ tool, max 5 iterasi, anti-loop.
+     * Pipeline linier: 1x LLM → 1x tool → return
      */
     async processInput(userInput) {
-        // Reset File Lock System per sesi chat baru
-        this.createdFilesInSession = new Set();
-        
         logger.user(userInput);
-        const startTime = Date.now();
-
-        try {
-            // Fast-path: IntentDetector untuk perintah SANGAT jelas
-            const intent = this.detectIntent(userInput);
-            if (intent.tool !== 'chat') {
-                const toolResult = await this.executeTool(intent.tool, intent.query);
-                if (toolResult) {
-                    this.history.push(`User: ${userInput}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                    this.history.push(`Jarvis: ${toolResult}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                    logger.jarvis(`${toolResult.substring(0, 200)} (${Date.now() - startTime}ms)`);
-                    return toolResult;
-                }
-            }
-
-            // Chat path → masuk Agentic Loop
-            this.history.push(`User: ${userInput}`);
-            if (this.history.length > this.maxHistory) this.history.shift();
-
-            return await this._runAgenticLoop({ onTokenCallback: null, startTime });
-        } catch (error) {
-            logger.logError('Agent.processInput', error);
-            return "❌ Maaf, terjadi kesalahan. Silakan coba lagi.";
-        }
+        return await this._executePipeline(userInput, { onTokenCallback: null });
     }
 
     /**
      * Proses input dengan streaming — UI memakai path ini (process-command-stream)
-     * Agentic Loop + streaming ke UI per token.
+     * Pipeline linier: 1x LLM → 1x tool → return
      */
     async processInputStream(userInput, onTokenCallback) {
-        // Reset File Lock System per sesi chat baru
-        this.createdFilesInSession = new Set();
-        
         logger.user(userInput);
-        const startTime = Date.now();
-
-        try {
-            // Fast-path: IntentDetector untuk perintah SANGAT jelas
-            const intent = this.detectIntent(userInput);
-            if (intent.tool !== 'chat') {
-                const toolResult = await this.executeTool(intent.tool, intent.query);
-                if (toolResult) {
-                    this.history.push(`User: ${userInput}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                    this.history.push(`Jarvis: ${toolResult}`);
-                    if (this.history.length > this.maxHistory) this.history.shift();
-                    if (onTokenCallback) onTokenCallback(toolResult);
-                    logger.jarvis(`${toolResult.substring(0, 200)} (${Date.now() - startTime}ms)`);
-                    return toolResult;
-                }
-            }
-
-            // Chat path → masuk Agentic Loop (dengan streaming)
-            this.history.push(`User: ${userInput}`);
-            if (this.history.length > this.maxHistory) this.history.shift();
-
-            return await this._runAgenticLoop({ onTokenCallback, startTime });
-        } catch (error) {
-            logger.logError('Agent.processInputStream', error);
-            if (onTokenCallback) onTokenCallback("❌ Maaf, terjadi kesalahan.");
-            return "❌ Maaf, terjadi kesalahan.";
-        }
+        return await this._executePipeline(userInput, { onTokenCallback });
     }
 }
 
