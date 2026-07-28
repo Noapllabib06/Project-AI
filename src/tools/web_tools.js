@@ -3,6 +3,7 @@
 const { exec } = require('child_process');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const google = require('googlethis');
 const logger = require('../utils/logger');
 const { processWebContent } = require('../engine/context_manager');
 
@@ -365,122 +366,52 @@ async function scrape_web_tool(url) {
 }
 
 /**
- * Mencari informasi di web menggunakan Google Search.
- * Mengembalikan hasil dalam format markdown dengan URL asli.
+ * Mencari informasi di web menggunakan Google Search (via googlethis).
+ * Mengembalikan 3 hasil teratas dalam format teks rapi.
  */
 async function search_web_tool(query) {
     const startTime = Date.now();
     logger.tool('search_web_tool', `Searching: "${query}"`);
     
-    const searchEngines = [
-        {
-            name: 'Google',
-            url: `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=id`,
-            parse: ($) => {
-                let results = '';
-                $('div.g').each((i, el) => {
-                    if (i >= 5) return false;
-                    const title = $(el).find('h3').text().trim();
-                    const link = $(el).find('a').attr('href');
-                    const snippet = $(el).find('.VwiC3b, .lEBKkf, span.aCOpRe').first().text().trim();
-                    
-                    if (title) {
-                        const cleanLink = link?.startsWith('/url?q=') 
-                            ? decodeURIComponent(link.split('/url?q=')[1]?.split('&')[0]) 
-                            : link || '';
-                        // Format markdown: [Judul](URL) + snippet
-                        const displayUrl = cleanLink || '(tautan tidak tersedia)';
-                        results += `📌 [${title}](${displayUrl})\n${displayUrl}\n${snippet || ''}\n\n`;
-                    }
-                });
-                return results;
-            }
-        },
-        {
-            name: 'DuckDuckGo',
-            url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-            parse: ($) => {
-                let results = '';
-                $('.result').each((i, el) => {
-                    if (i >= 5) return false;
-                    const title = $(el).find('.result__title').text().trim();
-                    const link = $(el).find('.result__url').text().trim();
-                    const snippet = $(el).find('.result__snippet').text().trim();
-                    
-                    if (title) {
-                        const displayUrl = link || '(tautan tidak tersedia)';
-                        // Format markdown: [Judul](URL) + snippet
-                        results += `📌 [${title}](${displayUrl})\n${displayUrl}\n${snippet}\n\n`;
-                    }
-                });
-                return results;
-            }
+    try {
+        const options = {
+            page: 0,
+            safe: false,
+            parse_ads: false,
+            additional_params: { hl: 'id' }
+        };
+        
+        const response = await google.search(query, options);
+        
+        if (!response.results || response.results.length === 0) {
+            return "Tidak ada hasil yang ditemukan di Google.";
         }
-    ];
-    
-    for (const engine of searchEngines) {
-        try {
-            logger.tool('search_web_tool', `Trying ${engine.name}...`);
-            const response = await axios.get(engine.url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                },
-                timeout: 8000
-            });
-            
-            const $ = cheerio.load(response.data);
-            let results = `🔍 **Hasil pencarian untuk: "${query}"** (via ${engine.name})\n\n`;
-            const parsed = engine.parse($);
-            
-            if (parsed && parsed.length > 20) {
-                results += parsed;
-            } else {
-                // Fallback: ambil semua teks yang relevan dengan link
-                $('h3, h2, a, span, p, div').each((i, el) => {
-                    if (i >= 20) return false;
-                    const href = $(el).attr('href');
-                    const text = $(el).text().trim();
-                    if (text && text.length > 20) {
-                        if (href && href.startsWith('http')) {
-                            results += `• [${text.substring(0, 80)}](${href})\n${href}\n\n`;
-                        } else if (!href) {
-                            results += `${text}\n\n`;
-                        }
-                    }
-                });
-            }
-            
-            if (results.length < 100) {
-                const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
-                const sentences = bodyText.match(/[^.!?]+[.!?]+/g) || [];
-                sentences.slice(0, 10).forEach(s => {
-                    const trimmed = s.trim();
-                    if (trimmed.length > 30) {
-                        results += `${trimmed}\n\n`;
-                    }
-                });
-            }
-            
-            const duration = Date.now() - startTime;
-            logger.tool('search_web_tool', `${engine.name} success (${duration}ms)`);
-            
-            if (results.length < 50) {
-                results += '_(Tidak ada hasil yang relevan)_';
-            }
-            
-            return results;
-        } catch (error) {
-            logger.warn('search_web_tool', `${engine.name} failed: ${error.message}`);
-            continue;
+        
+        // Ekstrak 3 hasil teratas agar konteks AI tidak kepenuhan
+        let searchResults = `🔍 **Hasil Pencarian Google untuk: "${query}"**\n\n`;
+        const maxResults = Math.min(3, response.results.length);
+        
+        for (let i = 0; i < maxResults; i++) {
+            const res = response.results[i];
+            searchResults += `📌 **${res.title}**\n`;
+            searchResults += `📝 ${res.description || '(Tidak ada deskripsi)'}\n`;
+            searchResults += `🔗 ${res.url || '(tautan tidak tersedia)'}\n\n`;
         }
+        
+        const duration = Date.now() - startTime;
+        logger.tool('search_web_tool', `Success (${duration}ms, ${maxResults} results)`);
+        return searchResults;
+        
+    } catch (error) {
+        logger.error('search_web_tool', error);
+        
+        // Fallback: buka Google di browser
+        const fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+        const command = process.platform === 'win32' ? `start "" "${fallbackUrl}"` : `open "${fallbackUrl}"`;
+        exec(command);
+        
+        return `❌ Gagal mencari di web: ${error.message}\n✅ Membuka halaman hasil pencarian di browser: ${fallbackUrl}`;
     }
-    
-    // Ultimate fallback
-    const fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    const command = process.platform === 'win32' ? `start "" "${fallbackUrl}"` : `open "${fallbackUrl}"`;
-    exec(command);
-    
-    return `❌ Gagal mengambil hasil pencarian secara otomatis.\n✅ Membuka halaman hasil pencarian di browser: ${fallbackUrl}`;
 }
 
 /**
@@ -497,4 +428,31 @@ function extractUrl(text) {
     return url;
 }
 
-module.exports = { open_web_tool, scrape_web_tool, search_web_tool, extractUrl, KNOWN_SITES };
+/**
+ * Baca konten artikel dari URL menggunakan axios + cheerio
+ * @param {string} url - URL target
+ * @returns {Promise<string>} Teks bersih dari halaman (max 4000 karakter)
+ */
+async function readWebTool(url) {
+    logger.tool('readWebTool', `Reading URL: "${url.substring(0, 100)}"`);
+    try {
+        const { data } = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            },
+            timeout: 15000
+        });
+        const $ = cheerio.load(data);
+        $('script, style, nav, footer, header, aside, iframe, noscript').remove();
+        let cleanText = $('body').text().replace(/\s+/g, ' ').trim();
+        const MAX_CHARS = 4000;
+        if (cleanText.length > MAX_CHARS) {
+            cleanText = cleanText.substring(0, MAX_CHARS) + "\n\n... [TEKS DIPOTONG: Halaman terlalu panjang]";
+        }
+        return cleanText || "[KOSONG] Halaman tidak mengandung teks yang bisa dibaca.";
+    } catch (error) {
+        return `Gagal membaca web: ${error.message}`;
+    }
+}
+
+module.exports = { open_web_tool, scrape_web_tool, search_web_tool, readWebTool, extractUrl, KNOWN_SITES };

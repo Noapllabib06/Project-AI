@@ -12,21 +12,25 @@ const logger = require("../utils/logger");
 const credentialManager = require("../utils/credentials");
 const { parseAndValidateAIOutput, generateFeedbackMessage } = require("./json_validator");
 const { executeWithFeedbackLoop } = require("./feedback_loop");
-const { open_web_tool, scrape_web_tool, search_web_tool, extractUrl, KNOWN_SITES } = require("../tools/web_tools");
+const { open_web_tool, scrape_web_tool, search_web_tool, readWebTool, extractUrl, KNOWN_SITES } = require("../tools/web_tools");
 const { yt_search_tool, play_youtube_music, play_youtube_video, getVideoInfo } = require("../tools/yt_tools");
 const { createFile, readFileTool } = require("../tools/file_tools");
 
 class JarvisAgent {
     constructor() {
         this.model = new ChatOllama({
-            model: "qwen3.5:9b", // Bisa Diganti kemodel Lain
+            model: "qwen2.5:7b", // Bisa Diganti kemodel Lain
             // Gunakan "Ollama list" untuk melihat model lokal yang tersedia
             // Masukan Nama Model Yang tersedia ke bagian model diatas, misal: "qwen2.5:7b" atau "gemma4:12b"
             temperature: 0.1,
             num_ctx: 65536,
         });
         
-        // Memori jangka pendek (Array lokal)
+        // Chat History untuk format messages API Ollama
+        this.chatHistory = [];
+        this.maxChatHistory = 10;
+
+        // Memori jangka pendek (Array lokal) — legacy
         this.history = []; 
         this.maxHistory = 12;
         
@@ -44,7 +48,7 @@ class JarvisAgent {
         // File Lock System: Set untuk melacak file yang sudah dibuat dalam sesi
         this.createdFilesInSession = new Set();
         
-        logger.info('JarvisAgent', 'Agent initialized with Ollama model: qwen3.5:9b');
+        logger.info('JarvisAgent', 'Agent initialized with Ollama model: qwen2.5:7b');
     }
 
     updateState(newState) {
@@ -222,6 +226,26 @@ class JarvisAgent {
                     const readResult = await readFileTool(query);
                     result = readResult.data;
                     break;
+
+                case 'read_web':
+                    this.updateState(`Membaca artikel web...`);
+                    result = await readWebTool(query);
+                    break;
+
+                case 'get_time':
+                    this.updateState(`Mendapatkan waktu...`);
+                    const now = new Date();
+                    result = now.toLocaleString('id-ID', {
+                        timeZone: 'Asia/Jakarta',
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                    }) + ' WIB';
+                    break;
                     
                 case 'chat':
                 default:
@@ -239,205 +263,98 @@ class JarvisAgent {
     }
 
     /**
-     * Parse output LLM: jika JSON tool call → eksekusi tool; jika chat → return teks.
-     * Mencegah JSON bocor ke UI.
-     */
-    async resolveAIOutput(aiOutput, startTime, onTokenCallback = null) {
-        const validation = parseAndValidateAIOutput(aiOutput);
-
-        if (validation.success) {
-            const { tool, query } = validation.data;
-            logger.debug('Agent', `AI output validated: tool=${tool}, query=${query.substring(0, 50)}`);
-            return await this.handleToolFromAI(tool, query, startTime, onTokenCallback);
-        }
-
-        // Fallback regex
-        const toolMatch = aiOutput.match(/\{"tool"\s*:\s*"([^"]+)"\s*,\s*"query"\s*:\s*"([^"]*)"\s*\}/);
-        if (toolMatch) {
-            const fallbackTool = toolMatch[1];
-            const fallbackQuery = toolMatch[2];
-            logger.debug('Agent', `Fallback regex extracted: tool=${fallbackTool}, query=${fallbackQuery.substring(0, 50)}`);
-            if (fallbackTool !== 'chat') {
-                return await this.handleToolFromAI(fallbackTool, fallbackQuery, startTime, onTokenCallback);
-            }
-        }
-
-        // Bukan tool call → tampilkan teks (strip sisa JSON jika ada)
-        const cleaned = this.stripJsonFromResponse(aiOutput);
-        if (onTokenCallback) onTokenCallback(cleaned);
-        this.history.push(`Jarvis: ${cleaned}`);
-        if (this.history.length > this.maxHistory) this.history.shift();
-        logger.jarvis(`${cleaned.substring(0, 200)} (${Date.now() - startTime}ms)`);
-        return cleaned;
-    }
-
-    /**
-     * Eksekusi tool dari output LLM, lalu rangkum jawaban natural.
-     */
-    async handleToolFromAI(tool, query, startTime, onTokenCallback = null) {
-        // Tool chat → langsung return query
-        if (tool === 'chat') {
-            if (onTokenCallback) onTokenCallback(query);
-            this.history.push(`Jarvis: ${query}`);
-            if (this.history.length > this.maxHistory) this.history.shift();
-            logger.jarvis(`${query.substring(0, 200)} (${Date.now() - startTime}ms)`);
-            return query;
-        }
-
-        const toolResult = await this.executeTool(tool, query);
-        if (!toolResult) {
-            const msg = `❌ Gagal menjalankan tool: ${tool}`;
-            if (onTokenCallback) onTokenCallback(msg);
-            return msg;
-        }
-
-        // open_web / play_music / play_video: hasil sudah human-readable
-        if (tool === 'open_web' || tool === 'play_music' || tool === 'play_video') {
-            if (onTokenCallback) onTokenCallback(toolResult);
-            this.history.push(`Jarvis: ${toolResult}`);
-            if (this.history.length > this.maxHistory) this.history.shift();
-            logger.jarvis(`${toolResult.substring(0, 200)} (${Date.now() - startTime}ms)`);
-            return toolResult;
-        }
-
-        // search_web / scrape_web / create_file: feed hasil tool ke LLM untuk jawaban natural
-        this.history.push(`[Tool Result: ${tool}]\n${toolResult}`);
-        const conversationHistory = this.history.join("\n");
-        const fullPrompt = `Kamu adalah JARVIS. Berdasarkan hasil eksekusi di atas, berikan jawaban akhir ke pengguna dalam format chat dalam Bahasa Indonesia. JANGAN output JSON.\n\n${conversationHistory}\n\nJawaban:`;
-
-        let finalAnswer = toolResult;
-        try {
-            if (onTokenCallback) {
-                const stream = await this.model.stream(fullPrompt);
-                finalAnswer = "";
-                for await (const chunk of stream) {
-                    const token = chunk.content || "";
-                    finalAnswer += token;
-                    onTokenCallback(token);
-                }
-                finalAnswer = finalAnswer.trim();
-            } else {
-                const response = await this.model.invoke(fullPrompt);
-                finalAnswer = (response.content || "").trim();
-            }
-            // Jika LLM masih mengeluarkan JSON tool call, pakai hasil tool
-            if (finalAnswer.startsWith('{') && finalAnswer.includes('"tool"')) {
-                finalAnswer = this.stripJsonFromResponse(finalAnswer);
-                if (!finalAnswer || finalAnswer.length < 10) {
-                    finalAnswer = toolResult;
-                }
-                if (onTokenCallback) onTokenCallback(finalAnswer);
-            }
-        } catch (e) {
-            finalAnswer = toolResult;
-            if (onTokenCallback) onTokenCallback(finalAnswer);
-        }
-
-        if (!finalAnswer || finalAnswer.length < 5) finalAnswer = toolResult;
-        finalAnswer = this.stripJsonFromResponse(finalAnswer);
-        this.history.push(`Jarvis: ${finalAnswer}`);
-        if (this.history.length > this.maxHistory) this.history.shift();
-        logger.jarvis(`${finalAnswer.substring(0, 200)} (${Date.now() - startTime}ms)`);
-        return finalAnswer;
-    }
-
-    /**
-     * Strip JSON tool calls from any response before displaying to user
-     */
-    stripJsonFromResponse(text) {
-        if (!text) return text;
-        let cleaned = text.replace(/\{"tool":\s*"[^"]+",\s*"query":\s*"([^"]*)"\s*\}/g, '$1');
-        cleaned = cleaned.replace(/\{["\s]*tool["\s]*:["\s]*"[^"]+"["\s]*,["\s]*query["\s]*:["\s]*"([^"]*)"["\s]*\}/g, '$1');
-        if (cleaned.startsWith('{') && cleaned.includes('"tool"')) {
-            const match = cleaned.match(/"query":\s*"([^"]+)"/);
-            if (match) cleaned = match[1];
-        }
-        return cleaned;
-    }
-
-    /**
-     * Pipeline Linier 1-Arah (Flow Engineering)
-     * 1) LLM dipanggil 1x untuk menghasilkan JSON tool call
-     * 2) Tool dieksekusi
-     * 3) Hasil langsung dikembalikan — tanpa rekursi/loop
+     * One-Shot Router (Flow Engineering - Single Pass)
+     * A. Panggil Ollama API 1x (dengan waktu real-time)
+     * B. Parse JSON balasan
+     * C. Eksekusi tool via switch-case
+     * D. Return hasil — DILARANG panggil Ollama lagi
      */
     async _executePipeline(userInput, { onTokenCallback = null, startTime = null } = {}) {
         const t0 = startTime || Date.now();
-        let finalText = "";
 
         try {
-            // TAHAP 1: Panggil LLM 1x untuk menghasilkan JSON tool call
-            const systemInstruction = _prompt.getDynamicPrompt(this.currentState);
-            const fullPrompt = `${systemInstruction}\n\nPertanyaan: ${userInput}\n\nJawab dengan JSON saja:`;
-            
+            // A. Simpan pesan user ke chatHistory
+            this.chatHistory.push({ role: 'user', content: userInput });
+            if (this.chatHistory.length > this.maxChatHistory) this.chatHistory.shift();
+
+            // B. Bangun payload messages: system + chatHistory
+            const messages = [
+                { role: 'system', content: _prompt.getDynamicPrompt(this.currentState) },
+                ...this.chatHistory
+            ];
+
+            // C. Panggil Ollama API dengan format messages array
             let aiOutput = "";
             try {
                 if (onTokenCallback) {
-                    onTokenCallback("Memproses niat Anda...\n");
-                    const stream = await this.model.stream(fullPrompt);
+                    onTokenCallback("Memproses...\n");
+                    const stream = await this.model.stream(messages);
                     for await (const chunk of stream) {
                         aiOutput += (chunk.content || "");
                     }
                 } else {
-                    const response = await this.model.invoke(fullPrompt);
+                    const response = await this.model.invoke(messages);
                     aiOutput = (response.content || "").trim();
                 }
             } catch (e) {
-                logger.logError('Agent.pipeline.callLLM', e);
+                logger.logError('Agent.callLLM', e);
                 const msg = "❌ Maaf, gagal memanggil model AI.";
                 if (onTokenCallback) onTokenCallback(msg);
                 return msg;
             }
 
-            // Parse output LLM
-            const validation = parseAndValidateAIOutput(aiOutput);
-            let tool, query;
-            if (validation.success) {
-                tool = validation.data.tool;
-                query = validation.data.query;
-            } else {
-                const toolMatch = aiOutput.match(/\{"tool"\s*:\s*"([^"]+)"\s*,\s*"query"\s*:\s*"([^"]*)"\s*\}/);
-                if (toolMatch) {
-                    tool = toolMatch[1];
-                    query = toolMatch[2];
+            // D. Simpan balasan assistant ke chatHistory
+            this.chatHistory.push({ role: 'assistant', content: aiOutput });
+            if (this.chatHistory.length > this.maxChatHistory) this.chatHistory.shift();
+
+            // E. Parse JSON dari balasan Ollama
+            let tool = 'chat', query = '';
+            try {
+                const parsed = JSON.parse(aiOutput);
+                tool = parsed.tool || 'chat';
+                query = parsed.query || parsed.params?.query || parsed.query || '';
+            } catch {
+                // Fallback regex jika JSON.parse gagal
+                const match = aiOutput.match(/\{"tool"\s*:\s*"([^"]+)"\s*,\s*"query"\s*:\s*"([^"]*)"\s*\}/);
+                if (match) {
+                    tool = match[1];
+                    query = match[2];
                 } else {
-                    const cleaned = this.stripJsonFromResponse(aiOutput);
+                    // Teks biasa tanpa JSON → anggap chat
+                    const cleaned = aiOutput.replace(/^["'\s]+|["'\s]+$/g, '');
                     if (onTokenCallback) onTokenCallback(cleaned);
                     logger.jarvis(`${cleaned.substring(0, 200)} (${Date.now() - t0}ms)`);
                     return cleaned;
                 }
             }
 
-            // TAHAP 2: Routing - jika chat, langsung return
+            // C. Routing & Eksekusi via switch-case (1x tool, lalu STOP)
             if (tool === 'chat') {
                 if (onTokenCallback) onTokenCallback(query);
                 logger.jarvis(`${query.substring(0, 200)} (${Date.now() - t0}ms)`);
                 return query;
             }
 
-            // TAHAP 3: Eksekusi tool (1x)
-            if (onTokenCallback) onTokenCallback(`Menjalankan alat: ${tool}...\n`);
+            if (onTokenCallback) onTokenCallback(`Menjalankan: ${tool}...\n`);
             const toolResult = await this.executeTool(tool, query);
-
+            
             if (!toolResult) {
-                finalText = `❌ Gagal menjalankan tool: ${tool}`;
-                if (onTokenCallback) onTokenCallback(finalText);
-                return finalText;
+                const msg = `❌ Gagal menjalankan tool: ${tool}`;
+                if (onTokenCallback) onTokenCallback(msg);
+                return msg;
             }
 
-            // TAHAP 4: Kembalikan hasil sebagai jawaban final
-            finalText = toolResult;
-            if (onTokenCallback) onTokenCallback(finalText);
-            logger.jarvis(`${finalText.substring(0, 200)} (${Date.now() - t0}ms)`);
-            return finalText;
+            // D. Return hasil — TIDAK ADA panggilan Ollama lagi
+            if (onTokenCallback) onTokenCallback(toolResult);
+            logger.jarvis(`${toolResult.substring(0, 200)} (${Date.now() - t0}ms)`);
+            return toolResult;
 
         } catch (error) {
-            logger.logError('Agent.pipeline', error);
+            logger.logError('Agent.router', error);
             const msg = `⚠️ System Exception: ${error.message}`;
             if (onTokenCallback) onTokenCallback(msg);
             return msg;
         } finally {
-            // Bersihkan memori agar context window tidak bengkak
             this.history = [];
             this.createdFilesInSession.clear();
         }
