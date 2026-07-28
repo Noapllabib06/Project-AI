@@ -3,7 +3,6 @@
 const { exec } = require('child_process');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const google = require('googlethis');
 const logger = require('../utils/logger');
 const { processWebContent } = require('../engine/context_manager');
 
@@ -366,41 +365,63 @@ async function scrape_web_tool(url) {
 }
 
 /**
- * Mencari informasi di web menggunakan Google Search (via googlethis).
- * Mengembalikan 3 hasil teratas dalam format teks rapi.
+ * Mencari informasi di web menggunakan Yahoo Search (Bing engine).
+ * Yahoo lebih ramah terhadap bot dibandingkan Google/DDG.
+ * Mengembalikan 4 hasil teratas dalam format teks rapi.
  */
 async function search_web_tool(query) {
     const startTime = Date.now();
     logger.tool('search_web_tool', `Searching: "${query}"`);
     
     try {
-        const options = {
-            page: 0,
-            safe: false,
-            parse_ads: false,
-            additional_params: { hl: 'id' }
-        };
+        // Menggunakan Yahoo Search (Bing engine) yang jauh lebih ramah terhadap bot
+        const url = `https://id.search.yahoo.com/search?p=${encodeURIComponent(query)}`;
         
-        const response = await google.search(query, options);
-        
-        if (!response.results || response.results.length === 0) {
-            return "Tidak ada hasil yang ditemukan di Google.";
+        const { data } = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+            },
+            timeout: 10000 // Batas waktu 10 detik agar tidak AggregateError/Hang
+        });
+
+        const $ = cheerio.load(data);
+        let results = [];
+
+        // Ekstrak 4 hasil pencarian pertama dari class '.algo' Yahoo
+        $('.algo').each((i, el) => {
+            if (i >= 4) return false; 
+            
+            const title = $(el).find('h3.title a').text().replace(/\s+/g, ' ').trim();
+            let link = $(el).find('h3.title a').attr('href');
+            
+            // Bersihkan tautan pelacakan Yahoo untuk mendapatkan URL aslinya
+            if (link && link.includes('RU=')) {
+                try {
+                    // Mengambil teks setelah RU= dan sebelum parameter /RK= berikutnya
+                    let realUrl = link.split('RU=')[1].split('/')[0];
+                    link = decodeURIComponent(realUrl);
+                } catch (e) {
+                    // Biarkan link apa adanya jika terjadi error parsing
+                }
+            }
+
+            // Yahoo menyimpan deskripsi di class .compText atau .fz-ms
+            const snippet = $(el).find('.compText, .fz-ms').text().replace(/\s+/g, ' ').trim();
+
+            if (title && link) {
+                results.push(`📌 **${title}**\n📝 ${snippet || '(Tidak ada deskripsi)'}\n🔗 ${link}\n`);
+            }
+        });
+
+        if (results.length === 0) {
+            return "Maaf, tidak ada hasil yang ditemukan. Mesin pencari mungkin meminta verifikasi Captcha.";
         }
-        
-        // Ekstrak 3 hasil teratas agar konteks AI tidak kepenuhan
-        let searchResults = `🔍 **Hasil Pencarian Google untuk: "${query}"**\n\n`;
-        const maxResults = Math.min(3, response.results.length);
-        
-        for (let i = 0; i < maxResults; i++) {
-            const res = response.results[i];
-            searchResults += `📌 **${res.title}**\n`;
-            searchResults += `📝 ${res.description || '(Tidak ada deskripsi)'}\n`;
-            searchResults += `🔗 ${res.url || '(tautan tidak tersedia)'}\n\n`;
-        }
-        
+
         const duration = Date.now() - startTime;
-        logger.tool('search_web_tool', `Success (${duration}ms, ${maxResults} results)`);
-        return searchResults;
+        logger.tool('search_web_tool', `Success (${duration}ms, ${results.length} results)`);
+        return `🔍 **Hasil Pencarian Web untuk: "${query}"**\n\n` + results.join('\n');
         
     } catch (error) {
         logger.error('search_web_tool', error);

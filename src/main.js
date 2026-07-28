@@ -1,6 +1,6 @@
 // src/main.js
 // Electron Main Process - Window Management, IPC, Tool Orchestrator
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const path = require('path');
 const agent = require('./engine/agent');
 const { open_web_tool, scrape_web_tool, search_web_tool } = require('./tools/web_tools');
@@ -36,6 +36,12 @@ function createWindow() {
     });
 
     mainWindow.loadFile(path.join(__dirname, 'gui', 'index.html'));
+
+    // Mencegah Electron membuka jendela baru, arahkan ke browser default OS
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        shell.openExternal(url);
+        return { action: 'deny' };
+    });
 }
 
 // ============ AI AGENT ORCHESTRATOR ============
