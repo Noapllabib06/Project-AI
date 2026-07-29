@@ -13,6 +13,7 @@ const credentialManager = require("../utils/credentials");
 const { parseAndValidateAIOutput, generateFeedbackMessage } = require("./json_validator");
 const { executeWithFeedbackLoop } = require("./feedback_loop");
 const { open_web_tool, scrape_web_tool, search_web_tool, readWebTool, extractUrl, KNOWN_SITES } = require("../tools/web_tools");
+const axios = require('axios');
 const { yt_search_tool, play_youtube_music, play_youtube_video, getVideoInfo } = require("../tools/yt_tools");
 const { createFile, readFileTool } = require("../tools/file_tools");
 
@@ -23,7 +24,7 @@ class JarvisAgent {
             // Gunakan "Ollama list" untuk melihat model lokal yang tersedia
             // Masukan Nama Model Yang tersedia ke bagian model diatas, misal: "qwen2.5:7b" atau "gemma4:12b"
             temperature: 0.1,
-            num_ctx: 65536,
+            num_ctx: 32000,
         });
         
         // Chat History untuk format messages API Ollama
@@ -230,6 +231,26 @@ class JarvisAgent {
                 case 'read_web':
                     this.updateState(`Membaca artikel web...`);
                     result = await readWebTool(query);
+                    break;
+
+                case 'search_knowledge':
+                    this.updateState(`Mencari di memori lokal...`);
+                    try {
+                        const response = await axios.post('http://localhost:8000/search', {
+                            query: query,
+                            k: 3
+                        });
+                        if (response.data && response.data.status === 'success') {
+                            const docs = response.data.results;
+                            result = docs.length > 0 
+                                ? docs.join('\n\n') 
+                                : "Maaf, saya tidak menemukan informasi tersebut di memori lokal saya.";
+                        } else {
+                            result = "❌ Memori lokal memberikan respon yang tidak valid.";
+                        }
+                    } catch (error) {
+                        result = `❌ Gagal menghubungi Service Memori: ${error.message}. Pastikan server local_memory.py sudah dijalankan.`;
+                    }
                     break;
 
                 case 'get_time':

@@ -48,11 +48,11 @@ const getToolsDescription = () => {
    - Input: {"tool": "delete_credential", "query": "nama_situs"}
    - Contoh: {"tool": "delete_credential", "query": "github"}
 
-📄 **File System:**
+📄 **File System & Knowledge:**
 10. **create_file** — Buat file teks di Desktop
     - Input: {"tool": "create_file", "query": "nama_file.txt|Isi konten file..."}
     - Contoh: {"tool": "create_file", "query": "catatan.txt|Ini adalah catatan saya..."}
-    - Contoh: {"tool": "create_file", "query": "resume.txt|Nama: John\nUsia: 25\nPekerjaan: Developer"}
+    - Contoh: {"tool": "create_file", "query": "resume.txt|Nama: John\\nUsia: 25\\nPekerjaan: Developer"}
     - ⚠️ Gunakan karakter PIPA (|) sebagai pemisah antara nama file dan isi konten
     - ⚠️ JANGAN GUNAKAN open_web untuk membuat file!
 
@@ -64,16 +64,20 @@ const getToolsDescription = () => {
     - ⚠️ Hanya untuk file teks (txt, js, json, md, html, css)
     - ⚠️ Maksimal 3000 karakter akan ditampilkan
 
+12. **search_knowledge** — Cari informasi di memori lokal/pengetahuan pribadi (RAG)
+    - Input: {"tool": "search_knowledge", "query": "pertanyaan_tentang_data_lokal"}
+    - Contoh: {"tool": "search_knowledge", "query": "siapa pengembang jarvis?"}
+    - Fungsi: Gunakan tool ini untuk mencari informasi spesifik yang telah disimpan dalam memori jangka panjang Jarvis.
+
+13. **learn_document** — Simpan informasi baru ke memori lokal
+    - Input: {"tool": "learn_document", "query": "informasi_yang_ingin_diingat"}
+    - Contoh: {"tool": "learn_document", "query": "Naufal suka pemrograman Python dan Rust."}
+    - Fungsi: Gunakan tool ini ketika pengguna meminta Anda untuk "mengingat", "mencatat di memori", atau "menyimpan informasi" tentang sesuatu.
+
 💬 **Chat (default):**
-12. **chat** — Jawab pertanyaan biasa
+14. **chat** — Jawab pertanyaan biasa
     - Input: {"tool": "chat", "query": "pertanyaan_user"}
     - Contoh: {"tool": "chat", "query": "siapa kamu?"}
-
-🧠 **Memori Lokal (RAG):**
-13. **search_knowledge** — Cari informasi di memori lokal
-    - Input: {"tool": "search_knowledge", "query": "pertanyaan_user"}
-    - Contoh: {"tool": "search_knowledge", "query": "siapa pengembangan utama jarvis?"}
-    - ⚠️ Gunakan tool ini untuk mencari informasi pribadi atau konteks proyek yang tersimpan di memori vektor lokal.
 
 ⚠️ **ATURAN OUTPUT JSON (WAJIB DIIKUTI):**
 1. HANYA output JSON, TANPA teks lain di luar kurung kurawal {}
@@ -87,9 +91,9 @@ const getToolsDescription = () => {
 
 ⚠️ **ATURAN MULTILINE JSON:**
 7. Jika Anda menuliskan kode (seperti HTML, JS, Python) atau teks panjang ke dalam parameter 'query', Anda DILARANG menggunakan baris baru (ENTER) secara langsung di dalam string JSON. Ini akan merusak format JSON.
-8. Anda HARUS mengubah semua baris baru menjadi karakter \n (backslash-n) agar JSON tetap valid.
-9. Contoh SALAH: {"tool": "create_file", "query": "index.html|<html>\n<body>\nHalo\n</body>\n</html>"} — INI SALAH karena ENTER langsung di dalam JSON.
-10. Contoh BENAR: {"tool": "create_file", "query": "index.html|<html>\\n<body>\\nHalo\\n</body>\\n</html>"} — INI BENAR karena newline ditulis sebagai \\n.
+8. Anda HARUS mengubah semua baris baru menjadi karakter \\n (backslash-n) agar JSON tetap valid.
+9. Contoh SALAH: {"tool": "create_file", "query": "index.html|<html>\\n<body>\\nHalo\\n</body>\\n</html>"} — INI SALAH karena ENTER langsung di dalam JSON.
+10. Contoh BENAR: {"tool": "create_file", "query": "index.html|<html>\\\\n<body>\\\\nHalo\\\\n</body>\\\\n</html>"} — INI BENAR karena newline ditulis sebagai \\\\n.
 
 ❌ SALAH: "Saya akan membuka youtube untuk Anda: {"tool": "open_web", "query": "youtube"}"
 ❌ SALAH: {"tool": "open_web", "query": "create a file named catatan.txt"}
@@ -136,6 +140,8 @@ Anda adalah Router. Balas HANYA dengan JSON valid format: {"tool": "nama_tool", 
 - Jika pengguna meminta buat file, gunakan tool "create_file".
 - Jika pengguna meminta baca file, gunakan tool "read_file".
 - Jika pengguna ingin membaca artikel atau isi link URL, gunakan tool "read_web".
+- Jika pengguna bertanya tentang pengetahuan pribadi atau data yang pernah disimpan, gunakan "search_knowledge".
+- Jika pengguna ingin Anda mengingat atau menyimpan informasi baru, gunakan "learn_document".
 
 ⚠️ **ATURAN MENJAWAB HASIL PENCARIAN WEB:**
 1. Saat Anda menggunakan tool 'search_web' atau 'read_web' dan mendapatkan hasilnya, JANGAN berikan jawaban yang terlalu panjang atau mentah.
@@ -144,6 +150,7 @@ Anda adalah Router. Balas HANYA dengan JSON valid format: {"tool": "nama_tool", 
 4. Pastikan jawaban Anda rapi, mudah dibaca secara sekilas (scannable), dan langsung menjawab inti pertanyaan pengguna.
 
 DILARANG KERAS menggunakan markdown, teks awalan, akhiran, penjelasan, atau roleplay. Jika melanggar, sistem akan hancur.
-Contoh: {"tool": "get_time", "query": ""}`};
+Contoh: {"tool": "get_time", "query": ""}`;
+};
 
 module.exports = { getDynamicPrompt };
