@@ -32,7 +32,7 @@ class LocalMemory:
             return 0
         
         # 1. Ubah teks menjadi embedding (float32)
-        embeddings = self.model.encode(texts).astype(np.float32)
+        embeddings = np.array(self.model.encode(texts)).astype(np.float32)
         
         # 2. Masukkan ke TurboQuantIndex
         self.index.add(embeddings)
@@ -47,7 +47,7 @@ class LocalMemory:
             return []
 
         # 1. Ubah query menjadi embedding
-        query_vec = self.model.encode([query]).astype(np.float32)
+        query_vec = np.array(self.model.encode([query])).astype(np.float32)
         
         # 2. Cari index paling mirip
         scores, indices = self.index.search(query_vec, k=k)
@@ -74,7 +74,7 @@ class LocalMemory:
             if loaded_docs:
                 print(f"Memulihkan {len(loaded_docs)} dokumen ke dalam indeks...")
                 # Re-indeks tanpa menambahkan ke self.documents secara redundan
-                embeddings = self.model.encode(loaded_docs).astype(np.float32)
+                embeddings = np.array(self.model.encode(loaded_docs)).astype(np.float32)
                 self.index.add(embeddings)
                 self.documents = loaded_docs
 
@@ -108,5 +108,5 @@ async def search_docs(req: SearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    print("\n🚀 Local Memory Service berjalan di http://localhost:8000")
+    print("\nLocal Memory Service berjalan di http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)

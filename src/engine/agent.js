@@ -233,23 +233,42 @@ class JarvisAgent {
                     result = await readWebTool(query);
                     break;
 
+                case 'learn_document':
+                    this.updateState(`Menyimpan informasi ke memori...`);
+                    try {
+                        // Mengirim teks ke endpoint /index di Python
+                        const learnResponse = await axios.post('http://localhost:8000/index', {
+                            texts: [query] // Dibungkus array karena Python meminta List[str]
+                        });
+                        
+                        if (learnResponse.data && learnResponse.data.status === 'success') {
+                            result = `✅ Informasi berhasil disimpan ke dalam memori permanen.`;
+                        } else {
+                            result = "❌ Gagal menyimpan memori. Respons API tidak valid.";
+                        }
+                    } catch (error) {
+                        result = `❌ Gagal menghubungi Service Memori: ${error.message}.`;
+                    }
+                    break;
+            
                 case 'search_knowledge':
                     this.updateState(`Mencari di memori lokal...`);
                     try {
                         const response = await axios.post('http://localhost:8000/search', {
                             query: query,
-                            k: 3
+                            k: 1 // UBAH INI DARI 3 MENJADI 1
                         });
                         if (response.data && response.data.status === 'success') {
                             const docs = response.data.results;
+                            // Format agar kalimatnya lebih natural saat dicetak ke UI
                             result = docs.length > 0 
-                                ? docs.join('\n\n') 
-                                : "Maaf, saya tidak menemukan informasi tersebut di memori lokal saya.";
+                                ? docs[0] // Hanya ambil hasil nomor 1 yang paling akurat
+                                : "Maaf, saya belum memiliki memori tentang hal tersebut.";
                         } else {
                             result = "❌ Memori lokal memberikan respon yang tidak valid.";
                         }
                     } catch (error) {
-                        result = `❌ Gagal menghubungi Service Memori: ${error.message}. Pastikan server local_memory.py sudah dijalankan.`;
+                        result = `❌ Gagal menghubungi Service Memori. Pastikan Python menyala.`;
                     }
                     break;
 

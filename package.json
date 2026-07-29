@@ -4,7 +4,9 @@
   "description": "",
   "main": "test_brain.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start:server": ".venv\\Scripts\\python.exe local_memory.py",
+    "start:ui": "npx electron src/main.js",
+    "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,JARVIS\" -c \"cyan,magenta\" \"npm run start:server\" \"npm run start:ui\""
   },
   "keywords": [],
   "author": "",
@@ -18,5 +20,8 @@
     "cheerio": "^1.2.0",
     "langchain": "^1.5.3",
     "play-dl": "^1.9.7"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4"
   }
 }
