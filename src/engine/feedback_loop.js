@@ -201,6 +201,15 @@ async function executeWithFeedbackLoop(executeTool, toolName, query, callAI) {
 }
 
 module.exports = {
-    FeedbackLoop,
-    executeWithFeedbackLoop
+    generateErrorFeedback: (toolName, errorMessage) => {
+        return `[SYSTEM FEEDBACK: INTERNAL ERROR RECOVERY]
+The previous attempt to use the tool '${toolName}' failed with the following error: "${errorMessage}".
+
+Your task is to recover from this error. Please choose one of the following actions:
+1. Try a DIFFERENT tool that might achieve the same goal.
+2. Try the SAME tool but with DIFFERENT, more precise, or simplified parameters.
+3. If the action is impossible, use the 'chat' tool to politely inform the user about the limitation.
+
+CRITICAL: Do not repeat the exact same tool call. Respond ONLY with a valid JSON object.`;
+    }
 };

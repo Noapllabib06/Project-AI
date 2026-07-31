@@ -1,115 +1,131 @@
 /**
  * src/tools/file_tools.js
- * File System Tools - Membuat dan menulis file teks ke Desktop
- * Menggunakan modul bawaan Node.js: fs, path, os
+ * File System Tools - Create and Read Files
+ * Format: Registry Pattern — export array of tool objects
  */
-
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const logger = require('../utils/logger');
 
-/**
- * Buat file teks di Desktop pengguna
- * @param {string} query - Format: "nama_file.txt|Isi konten file..."
- * @returns {string} Pesan sukses/gagal dalam bahasa Indonesia
- */
+// ===================== EXPORTED TOOL LOGIC =====================
+
 function createFile(query) {
-    logger.tool('createFile', `Input: "${query.substring(0, 100)}..."`);
-
+    logger.tool('createFile', `Creating file: "${query ? query.split('|')[0] : 'N/A'}"`);
     try {
-        // Validasi input
         if (!query || typeof query !== 'string') {
-            return "❌ Query tidak valid. Gunakan format: nama_file.txt|Isi konten";
+            return "❌ Gagal: Query tidak valid. Gunakan format: nama_file.txt|Isi konten...";
         }
-
-        // Pisahkan nama file dan konten berdasarkan delimiter '|'
-        const delimiterIndex = query.indexOf('|');
+        const pipeIndex = query.indexOf('|');
         let filename, content;
-
-        if (delimiterIndex === -1) {
-            // Jika tanpa delimiter, anggap seluruh string adalah nama file (kosong)
+        if (pipeIndex === -1) {
             filename = query.trim();
             content = '';
         } else {
-            filename = query.substring(0, delimiterIndex).trim();
-            content = query.substring(delimiterIndex + 1).trim();
+            filename = query.substring(0, pipeIndex).trim();
+            content = query.substring(pipeIndex + 1);
         }
-
         if (!filename) {
-            return "❌ Nama file tidak boleh kosong. Gunakan format: nama_file.txt|Isi konten";
+            return "❌ Gagal: Nama file tidak boleh kosong.";
         }
-
-        // Bersihkan nama file dari karakter berbahaya
-        filename = filename.replace(/[<>:"/\\|?*]/g, '_');
-
-        // Tentukan path ke Desktop
+        const sanitizedFilename = filename.replace(/[<>:"/\\|?*]/g, '_');
         const desktopPath = path.join(os.homedir(), 'Desktop');
-        const filePath = path.join(desktopPath, filename);
-
-        // Konversi escape sequences: \n → newline, \t → tab, \\ → \
-        // (LLM diminta menggunakan \\n di JSON agar valid, setelah JSON.parse jadi \n string literal)
-        content = content.replace(/\\n/g, '\n')
-                         .replace(/\\t/g, '\t')
-                         .replace(/\\\\/g, '\\');
-
-        // Buat file (sinkronus agar langsung selesai)
-        fs.writeFileSync(filePath, content, { encoding: 'utf-8' });
-
-        // Verifikasi file benar-benar tertulis
-        if (fs.existsSync(filePath)) {
-            const stats = fs.statSync(filePath);
-            const sizeKB = (stats.size / 1024).toFixed(2);
-            logger.tool('createFile', `✅ File berhasil dibuat: ${filePath} (${sizeKB} KB)`);
-            return `✅ File **${filename}** berhasil dibuat di Desktop. (${sizeKB} KB)`;
-        } else {
-            return `❌ Gagal memverifikasi file ${filename} setelah ditulis.`;
-        }
+        const filePath = path.join(desktopPath, sanitizedFilename);
+        const processedContent = content
+            .replace(/\\n/g, '\n')
+            .replace(/\\t/g, '\t')
+            .replace(/\\\\/g, '\\');
+        fs.writeFileSync(filePath, processedContent, 'utf-8');
+        const stats = fs.existsSync(filePath) ? fs.statSync(filePath) : null;
+        const fileSizeKB = stats ? (stats.size / 1024).toFixed(2) : 0;
+        logger.tool('createFile', `File created: ${filePath} (${fileSizeKB} KB)`);
+        return `✅ File "${sanitizedFilename}" berhasil dibuat di Desktop (${fileSizeKB} KB).`;
     } catch (error) {
         logger.error('createFile', error);
         return `❌ Gagal membuat file: ${error.message}`;
     }
 }
 
-/**
- * Baca isi file teks dari path yang diberikan
- * @param {string} query - Path absolut atau relatif ke file
- * @returns {Promise<{ success: boolean, data: string }>}
- */
 async function readFileTool(query) {
-    logger.tool('readFileTool', `Reading: "${query.substring(0, 100)}"`);
+    logger.tool('readFileTool', `Reading file: "${query}"`);
     try {
-        // Ekstrak path dari query (bersihkan dari pipe atau embel-embel)
-        const filePath = query.split('|')[0].trim();
-        const absolutePath = path.resolve(filePath);
-
-        // Cek eksistensi file
-        if (!fs.existsSync(absolutePath)) {
-            return {
-                success: false,
-                data: `[SYSTEM ERROR] File tidak ditemukan di lokasi: ${absolutePath}. Jangan gunakan tool read_file jika file belum ada.`
-            };
+        let filePath = query.trim();
+        if (!filePath) {
+            return { success: false, error: "❌ Path file tidak boleh kosong." };
         }
-
-        // Baca isi file
-        const content = fs.readFileSync(absolutePath, 'utf8');
-
-        // Batasi output agar tidak menghabiskan memory LLM (maksimal 3000 karakter)
-        const MAX_CHARS = 3000;
-        if (content.length > MAX_CHARS) {
-            return {
-                success: true,
-                data: content.substring(0, MAX_CHARS) + "\n\n... [SISTEM MEMOTONG TEKS: File terlalu panjang]"
-            };
+        if (!path.isAbsolute(filePath)) {
+            filePath = path.resolve(process.cwd(), filePath);
         }
-
-        return { success: true, data: content };
+        if (!fs.existsSync(filePath)) {
+            return { success: false, error: `❌ File tidak ditemukan: ${filePath}` };
+        }
+        const stats = fs.statSync(filePath);
+        if (!stats.isFile()) {
+            return { success: false, error: `❌ Path bukan file: ${filePath}` };
+        }
+        const textExtensions = ['.txt', '.js', '.json', '.md', '.html', '.css', '.xml', '.yaml', '.yml', '.log', '.env', '.py', '.java', '.php', '.rb', '.go', '.rs', '.sh', '.bat', '.sql', '.ts', '.jsx', '.tsx'];
+        const ext = path.extname(filePath).toLowerCase();
+        if (!textExtensions.includes(ext)) {
+            return { success: false, error: `❌ Ekstensi file tidak didukung untuk dibaca: ${ext}` };
+        }
+        const MAX_SIZE = 3000;
+        let content = fs.readFileSync(filePath, 'utf-8');
+        if (content.length > MAX_SIZE) {
+            content = content.substring(0, MAX_SIZE) + "\n\n... [TEKS DIPOTONG: File terlalu panjang]";
+        }
+        return { success: true, data: `📄 **Isi File: ${path.basename(filePath)}**\n\`\`\`\n${content}\n\`\`\`` };
     } catch (error) {
-        return {
-            success: false,
-            data: `[SYSTEM ERROR] Gagal membaca file: ${error.message}`
-        };
+        logger.error('readFileTool', error);
+        return { success: false, error: `❌ Gagal membaca file: ${error.message}` };
     }
 }
 
-module.exports = { createFile, readFileTool };
+// ===================== REGISTRY TOOLS =====================
+
+const fileTools = [
+    {
+        name: "create_file",
+        description: "Membuat file teks baru di Desktop. Gunakan format 'nama_file.txt|Isi konten...' dengan pipe (|) sebagai pemisah. Konten bisa multiline dengan \\n.",
+        parameters: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Format: 'nama_file.txt|Isi konten...'. Contoh: 'catatan.txt|Ini adalah catatan saya' atau 'resume.txt|Nama: John\\nUsia: 25'."
+                }
+            },
+            required: ["query"]
+        },
+        execute: async (args) => {
+            const result = createFile(args.query || '');
+            return { success: true, data: result };
+        }
+    },
+    {
+        name: "read_file",
+        description: "Membaca isi file teks lokal (txt, js, json, md, html, css, dll). Mendukung path absolut atau relatif. Maksimal 3000 karakter ditampilkan.",
+        parameters: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Path ke file yang ingin dibaca. Contoh: 'C:/Users/Noapllabib/Desktop/catatan.txt' atau './src/main.js'."
+                }
+            },
+            required: ["query"]
+        },
+        execute: async (args) => {
+            const result = await readFileTool(args.query || '');
+            if (result.success) {
+                return { success: true, data: result.data };
+            }
+            return { success: false, error: result.error };
+        }
+    }
+];
+
+// Backward compatibility
+fileTools.createFile = createFile;
+fileTools.readFileTool = readFileTool;
+
+module.exports = fileTools;

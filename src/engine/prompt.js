@@ -1,110 +1,39 @@
 /**
  * src/engine/prompt.js
  * Menyimpan instruksi dinamis untuk AI berdasarkan state.
- * Dilengkapi dengan daftar tools yang tersedia untuk AI Agent.
- * V2 - Termasuk Credential Manager untuk login otomatis.
+ * System prompt fokus ke kepribadian & gaya bicara Jarvis.
+ * Tool definitions dikelola secara otomatis oleh ToolRegistry.
  */
 
+const registry = require("../tools/registry");
+
 const getToolsDescription = () => {
-    return `
-📋 **DAFTAR TOOLS YANG TERSEDIA:**
-
-🌐 **Web Tools:**
-1. **open_web** — Buka URL di browser
-   - Input: {"tool": "open_web", "query": "nama_situs_atau_url"}
-   - Contoh: {"tool": "open_web", "query": "youtube"}
-   - ⚠️ DILARANG menggunakan open_web untuk membuat file!
-
-2. **search_web** — Cari di Google
-   - Input: {"tool": "search_web", "query": "kata_kunci_pencarian"}
-   - Contoh: {"tool": "search_web", "query": "berita teknologi terbaru"}
-
-3. **scrape_web** — Baca konten halaman web
-   - Input: {"tool": "scrape_web", "query": "https://..."}
-   - Contoh: {"tool": "scrape_web", "query": "https://example.com"}
-
-🎵 **YouTube:**
-4. **play_music** — Putar lagu di YouTube Music
-   - Input: {"tool": "play_music", "query": "judul_lagu artis"}
-   - Contoh: {"tool": "play_music", "query": "bohemian rhapsody queen"}
-
-5. **play_video** — Putar video di YouTube
-   - Input: {"tool": "play_video", "query": "kata_kunci_video"}
-   - Contoh: {"tool": "play_video", "query": "tutorial react js"}
-
-6. **search_youtube** — Cari konten di YouTube
-   - Input: {"tool": "search_youtube", "query": "kata_kunci"}
-   - Contoh: {"tool": "search_youtube", "query": "podcast AI"}
-
-🔐 **Credential Manager:**
-7. **save_credential** — Simpan password
-   - Input: {"tool": "save_credential", "query": "situs: username, password"}
-   - Contoh: {"tool": "save_credential", "query": "github: noapllabib, pass123"}
-
-8. **list_credentials** — Lihat daftar akun
-   - Input: {"tool": "list_credentials", "query": ""}
-
-9. **delete_credential** — Hapus kredensial
-   - Input: {"tool": "delete_credential", "query": "nama_situs"}
-   - Contoh: {"tool": "delete_credential", "query": "github"}
-
-📄 **File System:**
-10. **create_file** — Buat file teks di Desktop
-    - Input: {"tool": "create_file", "query": "nama_file.txt|Isi konten file..."}
-    - Contoh: {"tool": "create_file", "query": "catatan.txt|Ini adalah catatan saya..."}
-    - Contoh: {"tool": "create_file", "query": "resume.txt|Nama: John\nUsia: 25\nPekerjaan: Developer"}
-    - ⚠️ Gunakan karakter PIPA (|) sebagai pemisah antara nama file dan isi konten
-    - ⚠️ JANGAN GUNAKAN open_web untuk membuat file!
-
-11. **read_file** — Membaca isi teks dari sebuah file lokal
-    - Input: {"tool": "read_file", "query": "path/ke/nama_file.txt"}
-    - Contoh: {"tool": "read_file", "query": "C:/Users/Noapllabib/Desktop/catatan.txt"}
-    - Contoh: {"tool": "read_file", "query": "./src/main.js"}
-    - Fungsi: Gunakan tool ini jika Anda perlu mengetahui isi file sebelum memodifikasinya atau merangkum isinya.
-    - ⚠️ Hanya untuk file teks (txt, js, json, md, html, css)
-    - ⚠️ Maksimal 3000 karakter akan ditampilkan
-
-💬 **Chat (default):**
-12. **chat** — Jawab pertanyaan biasa
-    - Input: {"tool": "chat", "query": "pertanyaan_user"}
-    - Contoh: {"tool": "chat", "query": "siapa kamu?"}
-
-🧠 **Memori Lokal (RAG):**
-13. **search_knowledge** — Cari informasi di memori lokal
-    - Input: {"tool": "search_knowledge", "query": "pertanyaan_user"}
-    - Contoh: {"tool": "search_knowledge", "query": "siapa pengembangan utama jarvis?"}
-    - ⚠️ Gunakan tool ini untuk mencari informasi pribadi atau konteks proyek yang tersimpan di memori vektor lokal.
-
-⚠️ **ATURAN OUTPUT JSON (WAJIB DIIKUTI):**
-1. HANYA output JSON, TANPA teks lain di luar kurung kurawal {}
-2. Format: {"tool": "nama_tool", "query": "isi_query"}
-3. Jangan tambahkan penjelasan, komentar, atau teks naratif
-4. Jika tidak ada tool yang cocok, gunakan: {"tool": "chat", "query": "pertanyaan_user"}
-5. Pastikan JSON valid (tidak ada trailing comma, quotes yang tidak ditutup)
-6. Jika pengguna meminta membuat catatan, merangkum ke dalam file, atau menulis dokumen:
-   → GUNAKAN: {"tool": "create_file", "query": "nama_file.txt|Isi teks..."}
-   → JANGAN GUNAKAN open_web untuk membuat file!
-
-⚠️ **ATURAN MULTILINE JSON:**
-7. Jika Anda menuliskan kode (seperti HTML, JS, Python) atau teks panjang ke dalam parameter 'query', Anda DILARANG menggunakan baris baru (ENTER) secara langsung di dalam string JSON. Ini akan merusak format JSON.
-8. Anda HARUS mengubah semua baris baru menjadi karakter \n (backslash-n) agar JSON tetap valid.
-9. Contoh SALAH: {"tool": "create_file", "query": "index.html|<html>\n<body>\nHalo\n</body>\n</html>"} — INI SALAH karena ENTER langsung di dalam JSON.
-10. Contoh BENAR: {"tool": "create_file", "query": "index.html|<html>\\n<body>\\nHalo\\n</body>\\n</html>"} — INI BENAR karena newline ditulis sebagai \\n.
-
-❌ SALAH: "Saya akan membuka youtube untuk Anda: {"tool": "open_web", "query": "youtube"}"
-❌ SALAH: {"tool": "open_web", "query": "create a file named catatan.txt"}
-✅ BENAR: {"tool": "open_web", "query": "youtube"}
-✅ BENAR: {"tool": "create_file", "query": "catatan.txt|Isi file..."}
-
-💡 **Tips:**
-- Semua kredensial disimpan secara LOKAL dan TERENKRIPSI
-- Tidak ada data yang dikirim ke internet
-- Password aman karena hanya Anda yang punya akses ke komputer ini
-- Untuk membuat file teks di Desktop, gunakan create_file, BUKAN open_web`;
+    // Ambil daftar tool dari registry dan format jadi teks
+    const defs = registry.getToolDefinitions();
+    let desc = "📋 **DAFTAR TOOL YANG TERSEDIA:**\n\n";
+    
+    defs.forEach((def, index) => {
+        const func = def.function || def;
+        const name = func.name || '?';
+        const description = func.description || '';
+        const params = func.parameters?.properties || {};
+        const paramNames = Object.keys(params).join(', ') || '(tidak ada parameter)';
+        desc += `${index + 1}. **${name}** — ${description}\n`;
+        desc += `   - Parameter: ${paramNames}\n`;
+        
+        // Tambahkan contoh untuk tool umum
+        if (name === 'search_web') desc += `   - Contoh: {"tool": "${name}", "query": "berita teknologi terbaru"}\n`;
+        else if (name === 'open_website') desc += `   - Contoh: {"tool": "${name}", "query": "youtube"}\n`;
+        else if (name === 'play_music') desc += `   - Contoh: {"tool": "${name}", "query": "bohemian rhapsody queen"}\n`;
+        else if (name === 'play_video') desc += `   - Contoh: {"tool": "${name}", "query": "tutorial react js"}\n`;
+        else if (name === 'create_file') desc += `   - Contoh: {"tool": "${name}", "query": "catatan.txt|Isi catatan..."}\n`;
+        else desc += '\n';
+    });
+    
+    return desc;
 };
 
 const getDynamicPrompt = (currentState) => {
-    // Injeksi waktu real-time WIB untuk setiap request
     const currentTime = new Date().toLocaleString('id-ID', {
         timeZone: 'Asia/Jakarta',
         weekday: 'long',
@@ -127,23 +56,21 @@ Berjalan 100% lokal di komputer pengguna menggunakan Ollama.
 
 ${toolsDesc}
 
-**ATURAN MUTLAK (WAJIB):**
+**ATURAN OUTPUT (WAJIB):**
 Anda adalah Router. Balas HANYA dengan JSON valid format: {"tool": "nama_tool", "query": "isi_query"}. Jangan tambahkan teks apa pun di luar JSON.
 - Jika pengguna hanya ngobrol biasa, gunakan tool "chat".
-- Jika pengguna meminta data/waktu, gunakan tool "get_time".
-- Jika pengguna meminta pencarian web, gunakan tool "search_web".
-- Jika pengguna meminta buka situs, gunakan tool "open_web".
-- Jika pengguna meminta buat file, gunakan tool "create_file".
-- Jika pengguna meminta baca file, gunakan tool "read_file".
-- Jika pengguna ingin membaca artikel atau isi link URL, gunakan tool "read_web".
+- Untuk tool yang memerlukan parameter spesifik (misal URL, path file), isi parameter 'query' dengan nilai yang sesuai.
+- Pastikan JSON valid (tidak ada trailing comma, quotes yang tidak ditutup).
+- Jangan gunakan open_website untuk membuat file (gunakan create_file).
 
 ⚠️ **ATURAN MENJAWAB HASIL PENCARIAN WEB:**
-1. Saat Anda menggunakan tool 'search_web' atau 'read_web' dan mendapatkan hasilnya, JANGAN berikan jawaban yang terlalu panjang atau mentah.
+1. Saat Anda menggunakan tool 'search_web' atau 'read_webpage' dan mendapatkan hasilnya, JANGAN berikan jawaban yang terlalu panjang atau mentah.
 2. Ekstrak dan rangkum 3-4 poin informasi paling penting (misal: kisaran harga, kesimpulan berita, spesifikasi utama).
 3. Anda WAJIB menyertakan tautan sumber di akhir rangkuman Anda menggunakan format Markdown: [Sumber: Judul Artikel](URL_Tautan).
 4. Pastikan jawaban Anda rapi, mudah dibaca secara sekilas (scannable), dan langsung menjawab inti pertanyaan pengguna.
 
 DILARANG KERAS menggunakan markdown, teks awalan, akhiran, penjelasan, atau roleplay. Jika melanggar, sistem akan hancur.
-Contoh: {"tool": "get_time", "query": ""}`};
+Contoh: {"tool": "chat", "query": "Halo, apa kabar?"}`;
+};
 
 module.exports = { getDynamicPrompt };

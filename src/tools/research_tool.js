@@ -1,4 +1,8 @@
-// Research Tool
+/**
+ * src/tools/research_tool.js
+ * Research Tool — Mencari dan merangkum informasi dari web
+ * Format: Registry Pattern — export array of tool objects
+ */
 const { search_web_tool, scrape_web_tool } = require('./web_tools');
 const logger = require('../utils/logger');
 
@@ -12,7 +16,7 @@ async function research_and_summarize_tool(query) {
         const urls = searchResults.match(urlRegex) || [];
         
         if (urls.length === 0) {
-            return `? Tidak ditemukan hasil untuk "${query}".`;
+            return `📋 Tidak ditemukan hasil untuk "${query}".`;
         }
         
         const uniqueUrls = [...new Set(urls)].slice(0, 3);
@@ -34,7 +38,7 @@ async function research_and_summarize_tool(query) {
         }
         
         if (allContent.length === 0) {
-            return `? Gagal mengambil konten.`;
+            return `📋 Gagal mengambil konten.`;
         }
         
         const combinedText = allContent
@@ -43,16 +47,42 @@ async function research_and_summarize_tool(query) {
         
         const duration = Date.now() - startTime;
         
-        return `?? Research: "${query}"\n\n` +
-               `?? Sumber: ${allContent.length} website\n` +
-               `? Waktu: ${duration}ms\n\n` +
-               `?? Konten:\n\n${combinedText.substring(0, 3000)}\n\n` +
-               `?? Berdasarkan konten di atas, berikan penjelasan yang komprehensif.`;
+        return `📋 Research: "${query}"\n\n` +
+               `📊 Sumber: ${allContent.length} website\n` +
+               `⏱️ Waktu: ${duration}ms\n\n` +
+               `📝 Konten:\n\n${combinedText.substring(0, 3000)}\n\n` +
+               `💡 Berdasarkan konten di atas, berikan penjelasan yang komprehensif.`;
         
     } catch (error) {
         logger.error('research_and_summarize_tool', error);
-        return `? Gagal research: ${error.message}`;
+        return `❌ Gagal research: ${error.message}`;
     }
 }
 
-module.exports = { research_and_summarize_tool };
+// ===================== REGISTRY TOOLS =====================
+
+const researchTools = [
+    {
+        name: "research_and_summarize",
+        description: "Mencari informasi di web, membaca 3 sumber teratas, dan mengembalikan konten mentah untuk dianalisis lebih lanjut. Cocok untuk riset mendalam.",
+        parameters: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Topik atau pertanyaan yang ingin di-research. Contoh: 'perkembangan AI 2024', 'cara kerja blockchain'."
+                }
+            },
+            required: ["query"]
+        },
+        execute: async (args) => {
+            const result = await research_and_summarize_tool(args.query || '');
+            return { success: true, data: result };
+        }
+    }
+];
+
+// Backward compatibility
+researchTools.research_and_summarize_tool = research_and_summarize_tool;
+
+module.exports = researchTools;

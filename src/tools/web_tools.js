@@ -1,12 +1,16 @@
-// src/tools/web_tools.js
-// Universal Web Tools - Browsing, Scraping, Search
+/**
+ * src/tools/web_tools.js
+ * Universal Web Tools - Browsing, Scraping, Search
+ * Format: Registry Pattern — export array of tool objects
+ */
 const { exec } = require('child_process');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const logger = require('../utils/logger');
 const { processWebContent } = require('../engine/context_manager');
 
-// Daftar situs populer dengan URL langsung
+// ===================== INTERNAL CONSTANTS & HELPERS =====================
+
 const KNOWN_SITES_MAP = new Map([
     ['youtube', 'https://www.youtube.com'],
     ['youtube music', 'https://music.youtube.com'],
@@ -77,48 +81,25 @@ const KNOWN_SITES_MAP = new Map([
     ['zoom', 'https://zoom.us'],
 ]);
 
-// Untuk backward compatibility
 const KNOWN_SITES = Object.fromEntries(KNOWN_SITES_MAP);
 
-/**
- * Validasi apakah string adalah domain atau URL yang valid
- * Mencegah AI mengarang URL dari teks biasa (seperti judul artikel)
- */
 function isValidUrl(text) {
-    // Jika sudah ada protocol, valid
-    if (text.startsWith('http://') || text.startsWith('https://')) {
-        return true;
-    }
-    // Regex untuk validasi domain: harus mengandung titik dan TLD yang valid
-    // Contoh: google.com, scholar.google.com, youtube.com
+    if (text.startsWith('http://') || text.startsWith('https://')) return true;
     const domainRegex = /^([\da-z\.-]+)\.([a-z\.]{2,})(\/[^\s]*)?$/i;
     return domainRegex.test(text);
 }
 
-/**
- * Validasi tambahan: pastikan query tidak terlihat seperti judul artikel
- * (teks panjang dengan banyak spasi, bukan domain)
- */
 function isArticleTitle(text) {
     const cleaned = text.replace(/^(buka|open|browse)\s+/i, '').trim();
-    // Jika setelah dibersihkan masih memiliki banyak spasi (lebih dari 2 kata)
-    // dan tidak mengandung titik, kemungkinan besar bukan URL
     const words = cleaned.split(/\s+/).filter(w => w.length > 0);
-    if (words.length >= 3 && !cleaned.includes('.')) {
-        return true;
-    }
-    // Jika teks panjang (>60 karakter) dan tidak seperti URL
-    if (cleaned.length > 60 && !cleaned.includes('.') && !cleaned.includes('/')) {
-        return true;
-    }
+    if (words.length >= 3 && !cleaned.includes('.')) return true;
+    if (cleaned.length > 60 && !cleaned.includes('.') && !cleaned.includes('/')) return true;
     return false;
 }
 
 function findKnownSite(text) {
     const lowerText = text.toLowerCase();
-    if (KNOWN_SITES[lowerText]) {
-        return KNOWN_SITES[lowerText];
-    }
+    if (KNOWN_SITES[lowerText]) return KNOWN_SITES[lowerText];
     const words = lowerText.split(/\s+/).filter(w => w.length > 1);
     for (const [key, url] of KNOWN_SITES_MAP) {
         const lowerKey = key.toLowerCase();
@@ -130,16 +111,8 @@ function findKnownSite(text) {
     return null;
 }
 
-/**
- * Platform-based search URL builder.
- * Jika query mengandung nama platform besar, buat URL pencarian untuk platform tersebut.
- * Contoh: "wikipedia ai" → https://id.wikipedia.org/wiki/Special:Search?search=ai
- *          "youtube tutorial react" → https://www.youtube.com/results?search_query=tutorial+react
- */
 function buildPlatformSearchUrl(text) {
     const lowerText = text.toLowerCase();
-    
-    // Daftar platform dan pola URL pencarian mereka
     const platforms = [
         { keywords: ['wikipedia', 'wiki'], url: (q) => `https://id.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(q)}` },
         { keywords: ['youtube', 'yt'], url: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` },
@@ -154,78 +127,39 @@ function buildPlatformSearchUrl(text) {
         { keywords: ['pypi', 'python package'], url: (q) => `https://pypi.org/search/?q=${encodeURIComponent(q)}` },
         { keywords: ['amazon', 'shop'], url: (q) => `https://www.amazon.com/s?k=${encodeURIComponent(q)}` },
     ];
-    
-    // Cari platform yang cocok
     for (const platform of platforms) {
         const hasPlatform = platform.keywords.some(k => lowerText.includes(k));
         if (hasPlatform) {
-            // Ekstrak query pencarian: hapus nama platform dari teks
             let searchQuery = text;
             for (const kw of platform.keywords) {
                 searchQuery = searchQuery.replace(new RegExp(kw, 'gi'), '').trim();
             }
-            // Hapus kata perintah
             searchQuery = searchQuery.replace(/^(buka|open|browse|website|web|situs|halaman)\s+/i, '').trim();
-            // Hapus kata hubung
             searchQuery = searchQuery.replace(/\s+(tentang|di|pada|untuk|mengenai)\s+/gi, ' ').trim();
-            
-            if (searchQuery) {
-                return platform.url(searchQuery);
-            }
+            if (searchQuery) return platform.url(searchQuery);
         }
     }
-    
-    // Deteksi kampus
     const kampusWords = ['telkom', 'tel-u', 'telkomuniversity', 'polban', 'itb', 'ugm', 'ui', 'unpad', 'undip', 'univ', 'university'];
     const hasKampus = kampusWords.some(k => lowerText.includes(k));
     if (hasKampus) {
-        if (lowerText.includes('telkom') || lowerText.includes('tel-u') || lowerText.includes('telkomuniversity')) {
-            return 'https://lms.telkomuniversity.ac.id';
-        }
-        if (lowerText.includes('polban')) {
-            return 'https://lms.polban.ac.id';
-        }
+        if (lowerText.includes('telkom') || lowerText.includes('tel-u') || lowerText.includes('telkomuniversity')) return 'https://lms.telkomuniversity.ac.id';
+        if (lowerText.includes('polban')) return 'https://lms.polban.ac.id';
     }
-    
-    return null; // Bukan platform yang dikenal
+    return null;
 }
 
 function normalizeUrl(input) {
     let text = input.trim().toLowerCase();
-    
-    // Hapus kata perintah dari awal
     text = text.replace(/^(buka|open|browse)\s+/i, '').trim();
     text = text.replace(/^(website|web|situs|halaman)\s+/i, '').trim();
     text = text.replace(/\s+di\s+browser$/i, '').trim();
-    
-    // Jika sudah ada protocol, return langsung
-    if (text.startsWith('http://') || text.startsWith('https://')) {
-        return text;
-    }
-    
-    // Jika mengandung titik, mungkin domain langsung
-    if (text.includes('.')) {
-        return text.startsWith('http') ? text : `https://${text}`;
-    }
-    
-    // Cek di KNOWN_SITES
+    if (text.startsWith('http://') || text.startsWith('https://')) return text;
+    if (text.includes('.')) return text.startsWith('http') ? text : `https://${text}`;
     const knownUrl = findKnownSite(text);
-    if (knownUrl) {
-        return knownUrl;
-    }
-    
-    // Jika hanya satu kata (nama situs), coba tebak dengan .com
-    if (text.split(/\s+/).length === 1) {
-        return `https://www.${text}.com`;
-    }
-    
-    // Multi-word: coba buat URL pencarian platform
+    if (knownUrl) return knownUrl;
+    if (text.split(/\s+/).length === 1) return `https://www.${text}.com`;
     const platformUrl = buildPlatformSearchUrl(text);
-    if (platformUrl) {
-        return platformUrl;
-    }
-    
-    // Tidak bisa di-resolve → return null (akan ditolak oleh open_web_tool)
+    if (platformUrl) return platformUrl;
     return null;
 }
 
@@ -235,44 +169,43 @@ function extractLocation(rawQuery) {
     return cleanLocation.replace(/\s+/g, ' ');
 }
 
+function extractUrl(text) {
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const match = text.match(urlRegex);
+    if (!match) return null;
+    let url = match[0];
+    url = url.replace(/[)\]>]+$/, '');
+    return url;
+}
+
+// ===================== INTERNAL TOOL LOGIC =====================
+
 function open_web_tool(input) {
     logger.tool('open_web_tool', `Input: "${input}"`);
-    
     try {
-        // ============ CEK 1: MAP REQUEST ============
         const mapKeywords = ['maps', 'google maps', 'map', 'lokasi', 'cari di peta', 'petakan'];
         const lowerInput = input.toLowerCase();
         const isMapRequest = mapKeywords.some(k => lowerInput.includes(k)) &&
                             (lowerInput.includes('cari') || lowerInput.includes('lokasi') || 
                              lowerInput.includes('tempat') || lowerInput.includes('search') ||
                              lowerInput.includes('dari'));
-        
         if (isMapRequest) {
             const location = extractLocation(input);
             if (location && location.length > 2) {
                 const encodedLocation = encodeURIComponent(location);
                 const mapSearchUrl = `https://www.google.com/maps/search/${encodedLocation}`;
                 const command = process.platform === 'win32' ? `start "" "${mapSearchUrl}"` : `open "${mapSearchUrl}"`;
-                exec(command, (error) => {
-                    if (error) logger.error('open_web_tool', `exec error: ${error.message}`);
-                });
+                exec(command, (error) => { if (error) logger.error('open_web_tool', `exec error: ${error.message}`); });
                 logger.tool('open_web_tool', `Map search URL: ${mapSearchUrl}`);
                 return `✅ Membuka lokasi ${location} di Google Maps...`;
             }
         }
-        
-        // ============ CEK 2: VALIDASI ANTI-HALLUSINASI URL ============
-        // Cek apakah input terlihat seperti judul artikel (bukan URL)
         if (isArticleTitle(input)) {
             const msg = `❌ Input "${input}" tidak valid sebagai URL. Ini terlihat seperti teks biasa (mungkin judul artikel), bukan URL atau nama situs. Jangan membuat URL palsu. Gunakan search_web untuk mencari halaman ini.`;
             logger.warn('open_web_tool', msg);
             return msg;
         }
-        
-        // ============ CEK 3: VALIDASI DOMAIN ============
-        // Bersihkan input dari kata perintah
         let cleanedInput = input.replace(/^(buka|open|browse)\s+/i, '').trim();
-        // Jika mengandung titik, validasi format domain
         if (cleanedInput.includes('.')) {
             if (!isValidUrl(cleanedInput)) {
                 const msg = `❌ "${cleanedInput}" bukan format URL/domain yang valid. Jangan menebak URL. Gunakan search_web untuk mencari informasi.`;
@@ -280,16 +213,11 @@ function open_web_tool(input) {
                 return msg;
             }
         }
-        
-        // ============ NORMAL: BUKA URL ============
         const url = normalizeUrl(input);
-        
         if (url) {
             logger.tool('open_web_tool', `Normalized URL: ${url}`);
             const command = process.platform === 'win32' ? `start "" "${url}"` : `open "${url}"`;
-            exec(command, (error) => {
-                if (error) logger.error('open_web_tool', `exec error: ${error.message}`);
-            }); 
+            exec(command, (error) => { if (error) logger.error('open_web_tool', `exec error: ${error.message}`); }); 
             return `✅ Membuka ${url} di browser.`;
         } else {
             const searchQuery = encodeURIComponent(input.replace(/^(buka|open|browse)\s+/i, ''));
@@ -304,56 +232,31 @@ function open_web_tool(input) {
     }
 }
 
-/**
- * Mengambil dan membaca konten dari halaman web dengan chunking
- */
 async function scrape_web_tool(url) {
     const startTime = Date.now();
     logger.tool('scrape_web_tool', `Scraping: ${url}`);
-    
     try {
         let targetUrl = url;
-        if (!url.startsWith('http')) {
-            targetUrl = `https://${url}`;
-        }
-        
+        if (!url.startsWith('http')) targetUrl = `https://${url}`;
         const response = await axios.get(targetUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            },
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
             timeout: 15000
         });
-        
         const $ = cheerio.load(response.data);
-        
         $('script, style, nav, footer, header, iframe, noscript, svg, form, button, input').remove();
-        
         let text = '';
         $('p, h1, h2, h3, h4, h5, h6, li, td, th, blockquote, pre, code, article, section, div.content, div.main, div.article-body').each((i, el) => {
             const line = $(el).text().trim();
-            if (line.length > 30) {
-                text += line + '\n\n';
-            }
+            if (line.length > 30) text += line + '\n\n';
         });
-        
-        if (text.length < 100) {
-            text = $('body').text().replace(/\s+/g, ' ').trim();
-        }
-        
+        if (text.length < 100) text = $('body').text().replace(/\s+/g, ' ').trim();
         const duration = Date.now() - startTime;
-        
         if (text.length > 1500) {
             const { chunks, contextManager, stats } = processWebContent(text, targetUrl, 1500);
             logger.tool('scrape_web_tool', `Chunked: ${stats.totalChunks} chunks, ${stats.totalChars} chars (${duration}ms)`);
-            
             const summary = chunks.find(c => c.isSummary) || chunks[0];
             const conclusion = chunks.find(c => c.isConclusion) || chunks[chunks.length - 1];
-            
-            return `📄 **Konten dari ${targetUrl}**\n\n` +
-                   `📊 Statistik: ${stats.totalChunks} chunks, ${stats.totalChars} total chars\n\n` +
-                   `📝 **Ringkasan:**\n${summary.text}\n\n` +
-                   `💡 **Info:** Konten telah di-chunking.\n\n` +
-                   `🔗 **Sumber:** ${targetUrl}`;
+            return `📄 **Konten dari ${targetUrl}**\n\n📊 Statistik: ${stats.totalChunks} chunks, ${stats.totalChars} total chars\n\n📝 **Ringkasan:**\n${summary.text}\n\n💡 **Info:** Konten telah di-chunking.\n\n🔗 **Sumber:** ${targetUrl}`;
         } else {
             logger.tool('scrape_web_tool', `Success (${duration}ms, ${text.length} chars)`);
             return `📄 **Konten dari ${targetUrl}**\n\n${text}`;
@@ -364,103 +267,54 @@ async function scrape_web_tool(url) {
     }
 }
 
-/**
- * Mencari informasi di web menggunakan Yahoo Search (Bing engine).
- * Yahoo lebih ramah terhadap bot dibandingkan Google/DDG.
- * Mengembalikan 4 hasil teratas dalam format teks rapi.
- */
 async function search_web_tool(query) {
     const startTime = Date.now();
     logger.tool('search_web_tool', `Searching: "${query}"`);
-    
     try {
-        // Menggunakan Yahoo Search (Bing engine) yang jauh lebih ramah terhadap bot
         const url = `https://id.search.yahoo.com/search?p=${encodeURIComponent(query)}`;
-        
         const { data } = await axios.get(url, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                 'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
             },
-            timeout: 10000 // Batas waktu 10 detik agar tidak AggregateError/Hang
+            timeout: 10000
         });
-
         const $ = cheerio.load(data);
         let results = [];
-
-        // Ekstrak 4 hasil pencarian pertama dari class '.algo' Yahoo
         $('.algo').each((i, el) => {
-            if (i >= 4) return false; 
-            
+            if (i >= 4) return false;
             const title = $(el).find('h3.title a').text().replace(/\s+/g, ' ').trim();
             let link = $(el).find('h3.title a').attr('href');
-            
-            // Bersihkan tautan pelacakan Yahoo untuk mendapatkan URL aslinya
             if (link && link.includes('RU=')) {
                 try {
-                    // Mengambil teks setelah RU= dan sebelum parameter /RK= berikutnya
                     let realUrl = link.split('RU=')[1].split('/')[0];
                     link = decodeURIComponent(realUrl);
-                } catch (e) {
-                    // Biarkan link apa adanya jika terjadi error parsing
-                }
+                } catch (e) { /* fallback */ }
             }
-
-            // Yahoo menyimpan deskripsi di class .compText atau .fz-ms
             const snippet = $(el).find('.compText, .fz-ms').text().replace(/\s+/g, ' ').trim();
-
             if (title && link) {
                 results.push(`📌 **${title}**\n📝 ${snippet || '(Tidak ada deskripsi)'}\n🔗 ${link}\n`);
             }
         });
-
-        if (results.length === 0) {
-            return "Maaf, tidak ada hasil yang ditemukan. Mesin pencari mungkin meminta verifikasi Captcha.";
-        }
-
+        if (results.length === 0) return "Maaf, tidak ada hasil yang ditemukan. Mesin pencari mungkin meminta verifikasi Captcha.";
         const duration = Date.now() - startTime;
         logger.tool('search_web_tool', `Success (${duration}ms, ${results.length} results)`);
         return `🔍 **Hasil Pencarian Web untuk: "${query}"**\n\n` + results.join('\n');
-        
     } catch (error) {
         logger.error('search_web_tool', error);
-        
-        // Fallback: buka Google di browser
         const fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
         const command = process.platform === 'win32' ? `start "" "${fallbackUrl}"` : `open "${fallbackUrl}"`;
         exec(command);
-        
         return `❌ Gagal mencari di web: ${error.message}\n✅ Membuka halaman hasil pencarian di browser: ${fallbackUrl}`;
     }
 }
 
-/**
- * Mengekstrak URL dari teks perintah
- */
-function extractUrl(text) {
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const match = text.match(urlRegex);
-    if (!match) return null;
-    
-    let url = match[0];
-    url = url.replace(/[)\]>]+$/, '');
-    
-    return url;
-}
-
-/**
- * Baca konten artikel dari URL menggunakan axios + cheerio
- * @param {string} url - URL target
- * @returns {Promise<string>} Teks bersih dari halaman (max 4000 karakter)
- */
 async function readWebTool(url) {
     logger.tool('readWebTool', `Reading URL: "${url.substring(0, 100)}"`);
     try {
         const { data } = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            },
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
             timeout: 15000
         });
         const $ = cheerio.load(data);
@@ -476,4 +330,116 @@ async function readWebTool(url) {
     }
 }
 
-module.exports = { open_web_tool, scrape_web_tool, search_web_tool, readWebTool, extractUrl, KNOWN_SITES };
+// ===================== REGISTRY TOOLS =====================
+
+const webTools = [
+    {
+        name: "open_website",
+        description: "Membuka URL atau nama situs populer di browser default. Contoh: 'buka youtube', 'open google maps', 'https://example.com'.",
+        parameters: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Nama situs, URL, atau perintah untuk dibuka. Contoh: 'youtube', 'google maps jakarta', 'https://github.com'."
+                }
+            },
+            required: ["query"]
+        },
+        execute: async (args) => {
+            const result = open_web_tool(args.query || '');
+            return { success: true, data: result };
+        }
+    },
+    {
+        name: "search_web",
+        description: "Mencari informasi di internet menggunakan Yahoo Search. Mengembalikan hasil teratas dengan judul, deskripsi, dan URL.",
+        parameters: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Kata kunci pencarian. Contoh: 'berita teknologi terbaru', 'cara instal python'."
+                }
+            },
+            required: ["query"]
+        },
+        execute: async (args) => {
+            const query = args.query || '';
+            try {
+                if (!query) return { success: false, error: "Query pencarian tidak boleh kosong." };
+
+                // Yahoo Search (Bing engine) — lebih ramah terhadap bot dibanding Google/DDG
+                const url = `https://id.search.yahoo.com/search?p=${encodeURIComponent(query)}`;
+                const { data } = await axios.get(url, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+                    },
+                    timeout: 10000
+                });
+
+                const $ = cheerio.load(data);
+                let results = [];
+
+                $('.algo').each((i, el) => {
+                    if (i >= 4) return false;
+                    const title = $(el).find('h3.title a').text().replace(/\s+/g, ' ').trim();
+                    let link = $(el).find('h3.title a').attr('href');
+                    if (link && link.includes('RU=')) {
+                        try {
+                            let realUrl = link.split('RU=')[1].split('/')[0];
+                            link = decodeURIComponent(realUrl);
+                        } catch (e) { /* fallback */ }
+                    }
+                    const snippet = $(el).find('.compText, .fz-ms').text().replace(/\s+/g, ' ').trim();
+                    if (title && link) {
+                        results.push(`📌 **${title}**\n📝 ${snippet || '(Tidak ada deskripsi)'}\n🔗 ${link}\n`);
+                    }
+                });
+
+                if (results.length === 0) {
+                    return { success: false, error: "Tidak ada hasil yang ditemukan. Mesin pencari mungkin meminta verifikasi Captcha." };
+                }
+
+                return { 
+                    success: true, 
+                    data: `🔍 **Hasil Pencarian Web untuk: "${query}"**\n\n${results.join('\n')}` 
+                };
+            } catch (error) {
+                console.error("[search_web_tool_registry] Raw Error:", error);
+                logger.error('search_web_tool_registry', error);
+                return { success: false, error: error.message || "Failed to execute search" };
+            }
+        }
+    },
+    {
+        name: "read_webpage",
+        description: "Membaca konten teks dari sebuah halaman web/artikel. Berguna untuk merangkum berita, dokumentasi, atau artikel panjang.",
+        parameters: {
+            type: "object",
+            properties: {
+                url: {
+                    type: "string",
+                    description: "URL lengkap halaman web yang ingin dibaca. Contoh: 'https://id.wikipedia.org/wiki/Kecerdasan_buatan'."
+                }
+            },
+            required: ["url"]
+        },
+        execute: async (args) => {
+            const result = await scrape_web_tool(args.url || '');
+            return { success: true, data: result };
+        }
+    }
+];
+
+// Backward compatibility exports untuk code lama yang masih import secara langsung
+webTools.open_web_tool = open_web_tool;
+webTools.scrape_web_tool = scrape_web_tool;
+webTools.search_web_tool = search_web_tool;
+webTools.readWebTool = readWebTool;
+webTools.extractUrl = extractUrl;
+webTools.KNOWN_SITES = KNOWN_SITES;
+
+module.exports = webTools;
