@@ -16,81 +16,111 @@ function extractJsonFromText(text) {
         return null;
     }
 
-    // Cari JSON object di dalam teks (menggunakan regex untuk kurung kurawal)
-    const jsonRegex = /\{[\s\S]*\}/;
-    const match = text.match(jsonRegex);
-    
-    if (match) {
+    // 1. Coba cari dan parse JSON array [ { ... } ]
+    const arrayRegex = /\[\s*\{[\s\S]*\}\s*\]/;
+    const arrayMatch = text.match(arrayRegex);
+    if (arrayMatch) {
         try {
-            const parsed = JSON.parse(match[0]);
-            return parsed;
+            return JSON.parse(arrayMatch[0]);
         } catch (e) {
-            logger.warn('JsonValidator', `JSON.parse gagal, mencoba regex fallback untuk multiline...`);
-            
-            // === REGEX FALLBACK UNTUK MULTILINE STRING ===
-            // Saat LLM memasukkan literal newline di dalam string query (misal kode HTML),
-            // JSON.parse akan gagal. Regex ini mengekstrak tool dan query secara manual.
-            const toolMatch = match[0].match(/"tool"\s*:\s*"([^"]+)"/);
-            // Ambil semua teks di dalam query dari tanda kutip buka hingga sebelum kurung kurawal akhir
-            const queryMatch = match[0].match(/"query"\s*:\s*"([\s\S]*)"\s*\}?/);
-
-            if (toolMatch && queryMatch) {
-                let extractedQuery = queryMatch[1];
-                // Bersihkan tanda kutip penutup jika ikut terbawa
-                if (extractedQuery.endsWith('"')) {
-                    extractedQuery = extractedQuery.slice(0, -1);
-                }
-                
-                logger.debug('JsonValidator', `Regex fallback berhasil: tool=${toolMatch[1]}, query_length=${extractedQuery.length}`);
-                return {
-                    tool: toolMatch[1],
-                    query: extractedQuery.trim()
-                };
-            }
-            
-            logger.warn('JsonValidator', `Regex fallback juga gagal: ${match[0].substring(0, 100)}`);
-            return null;
+            logger.warn('JsonValidator', `JSON.parse array gagal`);
         }
     }
 
-    // Coba parse seluruh teks sebagai JSON
+    // 2. Coba tambahkan kurung siku jika formatnya object terpisah baris/koma
     try {
-        return JSON.parse(text);
+        const firstBrace = text.indexOf('{');
+        const lastBrace = text.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1) {
+            let jsonStr = text.substring(firstBrace, lastBrace + 1);
+            // Replace "}\n{" atau "}, {" dengan "},{"
+            jsonStr = jsonStr.replace(/\}\s*,?\s*\{/g, '},{');
+            const wrapped = '[' + jsonStr + ']';
+            const parsed = JSON.parse(wrapped);
+            if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].tool) {
+                return parsed;
+            }
+        }
     } catch (e) {
-        return null;
+        // Abaikan dan lanjut ke regex fallback
     }
+
+    // 3. Regex Fallback untuk multiline/broken JSON
+    logger.warn('JsonValidator', `JSON.parse gagal, mencoba regex fallback untuk mengekstrak tool dan query...`);
+    
+    const regex = /\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"?query"?\s*:\s*"([\s\S]*?)"\s*\}/g;
+    let match;
+    const tools = [];
+    
+    while ((match = regex.exec(text)) !== null) {
+        tools.push({
+            tool: match[1],
+            query: match[2].trim()
+        });
+    }
+
+    if (tools.length > 0) {
+        logger.debug('JsonValidator', `Regex fallback berhasil mengekstrak ${tools.length} tool.`);
+        return tools;
+    }
+
+    logger.warn('JsonValidator', `Semua metode ekstraksi gagal.`);
+    return null;
 }
 
 /**
  * Validasi struktur JSON sesuai schema yang diharapkan
  */
-function validateToolCall(json) {
-    if (!json || typeof json !== 'object') {
-        return { valid: false, error: 'Output bukan object' };
+function validateToolCall(jsonArray) {
+    if (!Array.isArray(jsonArray)) {
+        return { valid: false, error: 'Output bukan array' };
     }
 
-    if (!json.tool || typeof json.tool !== 'string') {
-        return { valid: false, error: 'Field "tool" tidak ditemukan atau bukan string' };
-    }
-
-    if (!json.query || typeof json.query !== 'string') {
-        return { valid: false, error: 'Field "query" tidak ditemukan atau bukan string' };
-    }
-
-    // Validasi tool name
     const validTools = [
         'open_web', 'search_web', 'scrape_web',
         'play_music', 'play_video', 'search_youtube',
         'save_credential', 'list_credentials', 'delete_credential',
-        'create_file',
+        'create_file', 'read_file', 'ingest_codebase', 'research_and_summarize', 'open_website', 'read_webpage', 'open_youtube_channel',
         'chat'
     ];
 
-    if (!validTools.includes(json.tool)) {
-        return { valid: false, error: `Tool "${json.tool}" tidak valid. Harus salah satu dari: ${validTools.join(', ')}` };
+    const validatedData = [];
+
+    for (const json of jsonArray) {
+        if (!json || typeof json !== 'object') {
+            return { valid: false, error: 'Terdapat item yang bukan object' };
+        }
+
+        // Edge case: Model output {"tool": ["t1", "t2"], "query": ["q1", "q2"]}
+        if (Array.isArray(json.tool) && Array.isArray(json.query)) {
+            const length = Math.min(json.tool.length, json.query.length);
+            for (let i = 0; i < length; i++) {
+                if (typeof json.tool[i] === 'string' && typeof json.query[i] === 'string') {
+                    if (!validTools.includes(json.tool[i])) {
+                        return { valid: false, error: `Tool "${json.tool[i]}" tidak valid. Harus salah satu dari: ${validTools.join(', ')}` };
+                    }
+                    validatedData.push({ tool: json.tool[i], query: json.query[i] });
+                }
+            }
+            continue;
+        }
+
+        if (!json.tool || typeof json.tool !== 'string') {
+            return { valid: false, error: 'Field "tool" tidak ditemukan atau bukan string' };
+        }
+
+        if (!json.query || typeof json.query !== 'string') {
+            return { valid: false, error: 'Field "query" tidak ditemukan atau bukan string' };
+        }
+
+        if (!validTools.includes(json.tool)) {
+            return { valid: false, error: `Tool "${json.tool}" tidak valid. Harus salah satu dari: ${validTools.join(', ')}` };
+        }
+        
+        validatedData.push(json);
     }
 
-    return { valid: true, data: json };
+    return { valid: true, data: validatedData };
 }
 
 /**
@@ -130,7 +160,8 @@ function parseAndValidateAIOutput(aiOutput) {
         };
     }
 
-    logger.debug('JsonValidator', `Valid JSON parsed: tool=${validation.data.tool}, query=${validation.data.query.substring(0, 50)}`);
+    const parsedTools = validation.data.map(t => t.tool).join(', ');
+    logger.debug('JsonValidator', `Valid JSON parsed: tools=[${parsedTools}]`);
     
     return {
         success: true,
@@ -151,16 +182,18 @@ Error: ${error}
 Output Anda yang salah:
 ${aiOutput}
 
-Format yang BENAR (HANYA JSON, TANPA teks lain):
-{"tool": "nama_tool", "query": "isi_query"}
+Format yang BENAR (HANYA JSON ATAU ARRAY OF JSON, TANPA teks lain):
+[{"tool": "nama_tool", "query": "isi_query"}]
 
-Contoh:
+Contoh Single:
 {"tool": "open_web", "query": "youtube"}
-{"tool": "chat", "query": "siapa kamu?"}
+
+Contoh Multi/Paralel:
+[{"tool": "search_web", "query": "cuaca jakarta"}, {"tool": "play_music", "query": "jazz"}]
 
 ATURAN:
-1. HANYA output JSON, TANPA penjelasan atau teks naratif
-2. Format: {"tool": "...", "query": "..."}
+1. HANYA output JSON atau Array of JSON, TANPA penjelasan atau teks naratif
+2. Format: {"tool": "...", "query": "..."} atau array dari format tersebut
 3. Jangan tambahkan tanda kutip di luar JSON
 4. Pastikan JSON valid (tidak ada trailing comma)
 

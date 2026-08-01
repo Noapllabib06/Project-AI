@@ -55,7 +55,15 @@
             </div>
 
             <div class="chat-input-area">
+                <!-- Preview Image Zone -->
+                <div id="imagePreviewContainer" class="image-preview-container" style="display: none;">
+                    <img id="imagePreview" class="image-preview" src="" alt="Preview">
+                    <button id="removeImageBtn" class="remove-image-btn" title="Hapus Gambar">✕</button>
+                </div>
                 <div class="input-wrapper">
+                    <button class="attach-btn" id="attachBtn" title="Lampirkan Gambar">📎</button>
+                    <input type="file" id="imageInput" accept="image/*" style="display: none;">
+
                     <input type="text" id="userInput" class="chat-input" placeholder="Ketik perintah Anda..." autofocus>
                     <button class="voice-btn" id="voiceBtn" title="Voice Input">🎤</button>
                     <button class="send-btn" id="sendBtn" title="Send">

@@ -12,6 +12,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const aiOrb = document.getElementById('aiOrb');
     const cyberCanvas = document.getElementById('cyberCanvas');
 
+    // Image Attachment Elements
+    const attachBtn = document.getElementById('attachBtn');
+    const imageInput = document.getElementById('imageInput');
+    const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+    const imagePreview = document.getElementById('imagePreview');
+    const removeImageBtn = document.getElementById('removeImageBtn');
+    
+    let currentImageBase64 = null;
+
     // ============ TITLE BAR CONTROLS ============
     document.getElementById('minimizeBtn').addEventListener('click', () => {
         if (window.jarvis) window.jarvis.minimizeWindow();
@@ -35,16 +44,59 @@ document.addEventListener('DOMContentLoaded', () => {
         window.jarvis.windowReady();
     }
 
+    // ============ IMAGE HANDLING ============
+    if (attachBtn) {
+        attachBtn.addEventListener('click', () => {
+            imageInput.click();
+        });
+    }
+
+    if (imageInput) {
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                // Get the base64 string without the prefix
+                currentImageBase64 = event.target.result;
+                imagePreview.src = currentImageBase64;
+                imagePreviewContainer.style.display = 'flex';
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    if (removeImageBtn) {
+        removeImageBtn.addEventListener('click', () => {
+            clearAttachment();
+        });
+    }
+
+    function clearAttachment() {
+        currentImageBase64 = null;
+        imagePreviewContainer.style.display = 'none';
+        imagePreview.src = '';
+        if (imageInput) imageInput.value = '';
+    }
+
     // ============ SEND MESSAGE ============
     async function sendMessage() {
-        const message = userInput.value.trim();
-        if (!message) return;
+        const messageText = userInput.value.trim();
+        if (!messageText && !currentImageBase64) return;
+
+        const payload = {
+            text: messageText,
+            image: currentImageBase64 ? currentImageBase64.split(',')[1] : null // Send only base64 data to backend
+        };
 
         // Clear input
         userInput.value = '';
+        const sentImage = currentImageBase64;
+        clearAttachment();
 
         // Add user message to chat
-        addMessage(message, 'user');
+        addMessage(messageText, 'user', sentImage);
 
         // Set status to thinking
         setStatus('Memproses...', 'thinking');
@@ -60,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
 
                 // Send command with streaming
-                const result = await window.jarvis.sendCommandStream(message);
+                const result = await window.jarvis.sendCommandStream(payload);
                 
                 if (!result.success) {
                     addMessage(result.response || '❌ Maaf, terjadi kesalahan.', 'ai');
@@ -122,7 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ============ ADD MESSAGE TO CHAT ============
-    function addMessage(text, type) {
+    function addMessage(text, type, imageSrc = null) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}-message`;
         messageDiv.dataset.timestamp = Date.now();
@@ -134,8 +186,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const content = document.createElement('div');
         content.className = 'message-content';
         
-        // Format rich text: detect URLs and emojis
-        content.innerHTML = formatMessage(text);
+        if (imageSrc) {
+            const img = document.createElement('img');
+            img.src = imageSrc;
+            img.style.maxWidth = '100%';
+            img.style.borderRadius = '8px';
+            img.style.marginBottom = '8px';
+            content.appendChild(img);
+        }
+
+        if (text) {
+            const textDiv = document.createElement('div');
+            // Format rich text: detect URLs and emojis
+            textDiv.innerHTML = formatMessage(text);
+            content.appendChild(textDiv);
+        }
 
         messageDiv.appendChild(icon);
         messageDiv.appendChild(content);

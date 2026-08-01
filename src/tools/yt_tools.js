@@ -130,6 +130,56 @@ async function play_youtube_video(query) {
     }
 }
 
+async function open_youtube_channel(query) {
+    logger.tool('open_youtube_channel', `Searching channel: "${query}"`);
+    try {
+        // Bersihkan prefix umum dari query
+        let cleanQuery = query.trim();
+        const prefixes = ['buka youtube channel', 'buka channel', 'buka youtube chanel',
+                          'open channel', 'channel', 'chanel', 'kanal'];
+        for (const prefix of prefixes) {
+            if (cleanQuery.toLowerCase().startsWith(prefix)) {
+                cleanQuery = cleanQuery.substring(prefix.length).trim();
+                break;
+            }
+        }
+        if (!cleanQuery) {
+            return `❌ Nama channel tidak boleh kosong.`;
+        }
+
+        // Cari channel via play-dl (type: 'channel', bukan 'video')
+        const searchResult = await play.search(cleanQuery, { limit: 3, type: 'channel' });
+
+        if (!searchResult || searchResult.length === 0) {
+            // Fallback: kalau search channel kosong, coba search biasa dan ambil info channel dari video teratas
+            const videoResults = await play.search(cleanQuery, { limit: 1 });
+            if (videoResults && videoResults.length > 0 && videoResults[0].channel?.url) {
+                const channelUrl = videoResults[0].channel.url;
+                const channelName = videoResults[0].channel.name;
+                const command = process.platform === 'win32' ? `start "" "${channelUrl}"` : `open "${channelUrl}"`;
+                exec(command, (error) => { if (error) logger.error('open_youtube_channel', `exec error: ${error.message}`); });
+                return `✅ Membuka channel **${channelName}**\n🔗 ${channelUrl}\n\n💡 Catatan: channel ditemukan lewat video terkait, bukan pencarian channel langsung.`;
+            }
+            return `❌ Tidak dapat menemukan channel "${cleanQuery}" di YouTube. Coba cek ejaan nama channel-nya.`;
+        }
+
+        const bestMatch = searchResult[0];
+        const channelUrl = bestMatch.url;
+        const channelName = bestMatch.name || cleanQuery;
+        const subscribers = bestMatch.subscribers || 'N/A';
+
+        const command = process.platform === 'win32' ? `start "" "${channelUrl}"` : `open "${channelUrl}"`;
+        exec(command, (error) => { if (error) logger.error('open_youtube_channel', `exec error: ${error.message}`); });
+
+        logger.tool('open_youtube_channel', `Opened: ${channelName} -> ${channelUrl}`);
+        return `✅ **Membuka Channel YouTube**\n📺 ${channelName}\n👥 Subscriber: ${subscribers}\n🔗 ${channelUrl}`;
+
+    } catch (error) {
+        logger.error('open_youtube_channel', error);
+        return `❌ Gagal membuka channel: ${error.message}. Coba gunakan search_youtube untuk mencari manual.`;
+    }
+}
+
 async function getVideoInfo(url) {
     logger.tool('getVideoInfo', `Getting info: "${url}"`);
     try {
@@ -221,6 +271,24 @@ const ytTools = [
             const result = await play_youtube_video(args.query || '');
             return { success: true, data: result };
         }
+    },
+    {
+        name: "open_youtube_channel",
+        description: "Mencari dan langsung membuka halaman channel YouTube tertentu di browser. Gunakan ini khusus saat user eksplisit minta 'buka channel X' atau 'buka kanal X', BUKAN untuk mencari video/lagu biasa.",
+        parameters: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Nama channel YouTube yang ingin dibuka. Contoh: 'MiawAug', 'Jerome Polin', 'Deddy Corbuzier'."
+                }
+            },
+            required: ["query"]
+        },
+        execute: async (args) => {
+            const result = await open_youtube_channel(args.query || '');
+            return { success: true, data: result };
+        }
     }
 ];
 
@@ -228,6 +296,7 @@ const ytTools = [
 ytTools.yt_search_tool = yt_search_tool;
 ytTools.play_youtube_music = play_youtube_music;
 ytTools.play_youtube_video = play_youtube_video;
+ytTools.open_youtube_channel = open_youtube_channel;
 ytTools.getVideoInfo = getVideoInfo;
 ytTools.getAudioStream = getAudioStream;
 

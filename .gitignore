@@ -33,6 +33,7 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+tempCodeRunnerFile.*
 
 # AI Assistant internal files
 .continue/
@@ -40,5 +41,13 @@ temp/
 # Old backup folder
 src - Copy/
 
-# Package lock
-package-lock.json
+# Python & Environment
+.venv/
+__pycache__/
+*.pyc
+
+# Local Database & Personal Data
+text_metadata.pkl
+*.index
+*.bin
+src/engine/memory/facts.json

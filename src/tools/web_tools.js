@@ -100,12 +100,23 @@ function isArticleTitle(text) {
 function findKnownSite(text) {
     const lowerText = text.toLowerCase();
     if (KNOWN_SITES[lowerText]) return KNOWN_SITES[lowerText];
+
     const words = lowerText.split(/\s+/).filter(w => w.length > 1);
+
     for (const [key, url] of KNOWN_SITES_MAP) {
         const lowerKey = key.toLowerCase();
         if (lowerKey === lowerText) return url;
+
         const keyWords = lowerKey.split(/\s+/);
-        const match = words.every(w => keyWords.some(kw => kw.includes(w) || w.includes(kw)));
+
+        const match = words.every(w => keyWords.some(kw => {
+            // Alias pendek (<=3 karakter) wajib exact match, cegah substring collision
+            if (kw.length <= 3 || w.length <= 3) {
+                return kw === w;
+            }
+            return kw.includes(w) || w.includes(kw);
+        }));
+
         if (match) return url;
     }
     return null;
@@ -157,10 +168,14 @@ function normalizeUrl(input) {
     if (text.includes('.')) return text.startsWith('http') ? text : `https://${text}`;
     const knownUrl = findKnownSite(text);
     if (knownUrl) return knownUrl;
-    if (text.split(/\s+/).length === 1) return `https://www.${text}.com`;
+    
+    // DIHAPUS: fallback tebak domain single-word (`https://www.${text}.com`)
+    // Alasan: menebak domain yang belum tentu eksis, kontradiktif dengan
+    // kebijakan "jangan menebak URL" yang sudah diterapkan di jalur lain.
+    
     const platformUrl = buildPlatformSearchUrl(text);
     if (platformUrl) return platformUrl;
-    return null;
+    return null; // null akan otomatis jatuh ke fallback Google Search di open_web_tool()
 }
 
 function extractLocation(rawQuery) {
