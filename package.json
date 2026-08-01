@@ -4,7 +4,7 @@
   "description": "",
   "main": "test_brain.js",
   "scripts": {
-    "start:server": ".venv\\Scripts\\python.exe local_memory.py",
+    "start:server": ".\\venv\\Scripts\\python.exe -m uvicorn local_memory:app --port 8000",
     "start:ui": "npx electron src/main.js",
     "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,JARVIS\" -c \"cyan,magenta\" \"npm run start:server\" \"npm run start:ui\""
   },

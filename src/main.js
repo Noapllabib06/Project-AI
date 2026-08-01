@@ -2,6 +2,7 @@
 // Electron Main Process - Window Management, IPC, Tool Orchestrator
 const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const path = require('path');
+//const { spawn } = require('child_process');
 const agent = require('./engine/agent');
 const { open_web_tool, scrape_web_tool, search_web_tool } = require('./tools/web_tools');
 const { yt_search_tool, play_youtube_music, play_youtube_video, getVideoInfo } = require('./tools/yt_tools');
@@ -15,6 +16,11 @@ if (process.defaultApp || /[\\/]electron/.test(process.execPath)) {
 }
 
 let mainWindow;
+let pythonServerProcess = null;
+
+function startPythonServer() {
+
+}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -52,22 +58,22 @@ function createWindow() {
  */
 async function processUserCommand(userInput) {
     console.log(`\n[USER]: ${userInput}`);
-    
+
     // Update status menjadi "Memproses..."
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('status-update', { text: 'Memproses...', state: 'thinking' });
     }
-    
+
     // Agent akan mendeteksi intent dan menjalankan tool atau chat
     const response = await agent.processInput(userInput);
-    
+
     console.log(`[JARVIS]: ${response}`);
-    
+
     // Kembalikan status ke idle
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('status-update', { text: 'Menunggu perintah...', state: 'idle' });
     }
-    
+
     return response;
 }
 
@@ -168,9 +174,9 @@ ipcMain.on('window-close', () => {
 // Kirim status update ke renderer saat window siap
 ipcMain.on('window-ready', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('status-update', { 
-            text: agent.currentState, 
-            state: 'idle' 
+        mainWindow.webContents.send('status-update', {
+            text: agent.currentState,
+            state: 'idle'
         });
     }
 });
@@ -198,6 +204,7 @@ app.whenReady().then(() => {
         callback(false);
     });
 
+    startPythonServer();
     createWindow();
 
     app.on('activate', () => {
@@ -207,6 +214,13 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+    if (pythonServerProcess) {
+        console.log('[Main] Mematikan Python Server...');
+        pythonServerProcess.kill();
+    }
 });
 
 module.exports = { processUserCommand };

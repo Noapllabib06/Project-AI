@@ -46,6 +46,10 @@ const TOOL_CATEGORIES = {
         keywords: ['berkas', 'file', 'tulis', 'baca', 'kode', 'catatan', 'dokumen', 'document',
                    'buka file', 'folder', 'proyek', 'project', 'indeks kode', 'codebase'],
         tools: ['create_file', 'read_file', 'ingest_codebase']
+    },
+    MEMORY: {
+        keywords: ['ingat', 'memori', 'simpan', 'lupa', 'ingatan', 'kode', 'rahasia', 'remember', 'forget', 'memory', 'save', 'past'],
+        tools: ['save_memory', 'search_memory']
     }
 };
 
@@ -302,7 +306,7 @@ Pesan: "${userInput}"`;
             }
 
             // H. Eksekusi Tool (Paralel)
-            const SYNTHESIS_REQUIRED_TOOLS = ['search_web', 'read_webpage', 'research_and_summarize'];
+            const SYNTHESIS_REQUIRED_TOOLS = ['search_web', 'read_webpage', 'research_and_summarize', 'save_memory', 'search_memory'];
             let needsSynthesis = false;
             let rawSynthesisData = "";
             let finalOutput = "";

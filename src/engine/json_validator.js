@@ -81,6 +81,7 @@ function validateToolCall(jsonArray) {
         'play_music', 'play_video', 'search_youtube',
         'save_credential', 'list_credentials', 'delete_credential',
         'create_file', 'read_file', 'ingest_codebase', 'research_and_summarize', 'open_website', 'read_webpage', 'open_youtube_channel',
+        'save_memory', 'search_memory',
         'chat'
     ];
 

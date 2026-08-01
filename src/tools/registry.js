@@ -15,11 +15,21 @@
 const path = require('path');
 const fs = require('fs');
 const logger = require('../utils/logger');
+const memorySearchTool = require('./memory_search_tool');
+const memorySaveTool = require('./memory_save');
 
 class ToolRegistry {
     constructor() {
         this.tools = new Map(); // name -> tool object
         this.loaded = false;
+        
+        // Manual registration for bundled tools
+        const manualTools = [memorySearchTool, memorySaveTool];
+        for (const tool of manualTools) {
+            if (this._validateTool(tool, 'manual')) {
+                this.tools.set(tool.name, tool);
+            }
+        }
     }
 
     /**
@@ -31,11 +41,11 @@ class ToolRegistry {
         
         const toolsDir = path.join(__dirname); // src/tools/
         const files = fs.readdirSync(toolsDir).filter(f => 
-            f.endsWith('.js') && f !== 'registry.js'
+            f.endsWith('.js') && f !== 'registry.js' && f !== 'memory_search_tool.js' && f !== 'memory_save.js'
         );
 
-        let totalTools = 0;
-        const toolNames = [];
+        let totalTools = this.tools.size;
+        const toolNames = Array.from(this.tools.keys());
 
         for (const file of files) {
             const filePath = path.join(toolsDir, file);

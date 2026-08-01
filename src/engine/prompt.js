@@ -26,12 +26,13 @@ const TOOL_DECISION_RULES = `📋 **ATURAN PENGGUNAAN TOOL (WAJIB):**
 5. Jika Anda memutuskan untuk tidak menggunakan tool (chat biasa), output HANYA JSON: {"tool": "chat", "query": "jawaban_Anda_di_sini"}.
 6. JANGAN pernah menambahkan teks, markdown, penjelasan, atau roleplay di luar JSON. HANYA JSON.
 7. Jika Anda ragu apakah perlu tool atau tidak, pilih chat ({"tool": "chat", "query": "..."}) daripada memaksa menggunakan tool.
-7. Untuk pertanyaan tentang JABATAN/POSISI SAAT INI (presiden, menteri, CEO, ketua,
+8. **ATURAN MEMORI KETAT (RAG):** Untuk pertanyaan apa pun terkait fakta masa lalu, preferensi pengguna, data yang disimpan, atau kode/informasi rahasia yang disebutkan sebelumnya, Anda WAJIB SELALU menggunakan tool \`search_memory\` terlebih dahulu. Jangan mengandalkan riwayat obrolan (chat history) Anda untuk menjawab informasi faktual yang harus diingat. Anggap riwayat obrolan Anda mudah menguap, sedangkan \`search_memory\` adalah sumber kebenaran (source of truth) absolut.
+9. Untuk pertanyaan tentang JABATAN/POSISI SAAT INI (presiden, menteri, CEO, ketua,
    gubernur, dll), HARGA/KURS, atau fakta yang bisa berubah sewaktu-waktu — SELALU
    gunakan search_web walau kamu merasa tahu jawabannya. Pengetahuanmu punya batas
    waktu (training cutoff) dan bisa sudah usang. JANGAN pernah menjawab pertanyaan
-   jenis ini langsung dari memori, walau terasa yakin.
-8. Jika user menanyakan FAKTA SPESIFIK (seperti alamat, lokasi institusi, jadwal, atau profil), WAJIB gunakan tool pencarian (search_web). JANGAN PERNAH menjawab dari tebakan atau ingatan internalmu.
+   jenis ini langsung dari memori internalmu, walau terasa yakin.
+10. Jika user menanyakan FAKTA SPESIFIK (seperti alamat, lokasi institusi, jadwal, atau profil), WAJIB gunakan tool pencarian (search_web). JANGAN PERNAH menjawab dari tebakan atau ingatan internalmu.
 9. Jika pengguna meminta "buka situs" atau "buka website", gunakan open_website, bukan search_web.
 10. Jika pengguna meminta "buka channel YouTube" atau "buka kanal YouTube", gunakan open_youtube_channel, bukan search_youtube.
 11. Jika pengguna meminta "putar musik" atau "putar lagu", gunakan play_music, bukan search_youtube.
@@ -61,6 +62,12 @@ const WEB_ANSWER_RULES = `⚠️ **ATURAN MENJAWAB HASIL PENCARIAN WEB:**
  * TOOL_EXAMPLES: Map contoh per nama tool untuk generate few-shot secara dinamis.
  */
 const TOOL_EXAMPLES = {
+    search_memory: `✅ (cari ingatan / masa lalu):
+User: "apa makanan kesukaan saya yang kemarin kubilang?"
+Assistant: {"tool": "search_memory", "query": "makanan kesukaan"}`,
+    save_memory: `✅ (simpan ingatan / fakta):
+User: "tolong ingat kalau makanan kesukaan saya ayam goreng"
+Assistant: {"tool": "save_memory", "query": "makanan kesukaan saya ayam goreng"}`,
     search_web: `✅ (cari info real-time):
 User: "cari berita teknologi terbaru"
 Assistant: {"tool": "search_web", "query": "berita teknologi terbaru"}`,
