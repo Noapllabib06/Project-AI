@@ -120,11 +120,4 @@ Fitur unggulan yang memungkinkan Jarvis "mengingat" informasi secara permanen:
 | **AI Menolak Menyimpan Data** | Guardrails keamanan terhadap kata kunci sensitif. | Hindari menyimpan kata kunci seperti "password" atau "private key" secara gamblang. |
 
 ---
-*Dibuat dengan ❤️ oleh Naufal untuk Project Jarvis AI.*
-</write_to_file>
-<task_progress>
-- [x] Analyze all project files to extract technical details
-- [x] Map directory structure
-- [x] Extract tool capabilities from `src/tools/`
-- [x] Draft and write the comprehensive User Manual in `GUIDE.md`
-</task_progress>
+*Dibuat oleh Naufal untuk Project Jarvis AI.*

@@ -18,6 +18,7 @@ const logger = require("../utils/logger");
 const registry = require("../tools/registry");
 const { generateErrorFeedback } = require("./feedback_loop");
 const json_validator = require("./json_validator");
+const axios = require("axios");
 
 // Muat semua tool dari registry sekali saat startup
 registry.loadAll();
@@ -150,6 +151,21 @@ class JarvisAgent {
         logger.debug('JarvisAgent', `State updated: "${newState}"`);
     }
 
+    async _unloadModel(modelName) {
+        try {
+            // VRAM GUARD: RTX 4050 6GB Constraint.
+            // Memaksa Ollama untuk unload model dari memori GPU secara instan
+            // untuk menghindari OOM saat perpindahan dari Qwen ke LLaVA atau sebaliknya.
+            await axios.post('http://127.0.0.1:11434/api/generate', {
+                model: modelName,
+                keep_alive: 0
+            });
+            logger.debug('VRAM_Manager', `Model ${modelName} unloaded to free VRAM.`);
+        } catch (e) {
+            logger.error('VRAM_Manager', `Gagal unload model ${modelName}: ${e.message}`);
+        }
+    }
+
     async _extractFactsBackground(userInput) {
         try {
             const prompt = `Ekstrak fakta permanen tentang pengguna dari pesan ini (jika ada). 
@@ -220,6 +236,11 @@ Pesan: "${userInput}"`;
      */
     async _executePipeline(userInput, { onTokenCallback = null, startTime = null, retryCount = 0 } = {}) {
         const t0 = startTime || Date.now();
+
+        // VRAM GUARD: Pastikan LLaVA sudah di-unload sebelum Qwen (Logic Agent) berjalan
+        if (retryCount === 0) {
+            await this._unloadModel("llava:7b");
+        }
 
         try {
             // A. Bersihkan input user — hanya push ke chatHistory jika retry pertama (retryCount === 0)
@@ -441,6 +462,10 @@ informasi yang ditemukan kurang relevan/kurang update, jangan memaksakan jawaban
      */
     async _executeVision(userInput, imageBase64, onTokenCallback) {
         this.updateState('Menganalisis gambar...');
+        
+        // VRAM GUARD: Unload Qwen sebelum meload LLaVA
+        await this._unloadModel("qwen2.5:7b");
+        
         try {
             const promptText = userInput || "Tolong jelaskan secara detail apa yang ada di gambar ini.";
             const messages = [
@@ -472,6 +497,8 @@ informasi yang ditemukan kurang relevan/kurang update, jangan memaksakan jawaban
             return msg;
         } finally {
             this.updateState('idle');
+            // VRAM GUARD: Unload LLaVA setelah selesai agar RAM kosong
+            await this._unloadModel("llava:7b");
         }
     }
 
